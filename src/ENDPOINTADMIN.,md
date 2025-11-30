@@ -1,0 +1,700 @@
+# 🔐 Endpoints del Rol ADMIN
+
+Todos los endpoints requieren autenticación con token JWT:
+```
+Authorization: Bearer {token}
+```
+
+---
+
+## 📋 ÍNDICE DE ENDPOINTS
+
+1. [Autenticación](#autenticación)
+2. [Cooperativa](#cooperativa)
+3. [Buses](#buses)
+4. [Grupos de Buses](#grupos-de-buses)
+5. [Rutas](#rutas)
+6. [Frecuencias](#frecuencias)
+7. [Viajes](#viajes)
+8. [Personal (Staff)](#personal-staff)
+9. [Dashboard y Reportes](#dashboard-y-reportes)
+10. [Tickets](#tickets)
+11. [Operaciones](#operaciones)
+
+---
+
+## 🔐 Autenticación
+
+### Login
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@cooperativa.com",
+  "password": "tu_password"
+}
+```
+
+### Cambiar Contraseña
+```http
+POST /api/auth/change-password
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "currentPassword": "password_actual",
+  "newPassword": "nuevo_password"
+}
+```
+
+---
+
+## 🏢 Cooperativa
+
+### Ver Información de Tu Cooperativa
+```http
+GET /api/cooperativas/{cooperativaId}
+Authorization: Bearer {token}
+```
+
+### Actualizar Tu Cooperativa
+```http
+PUT /api/cooperativas/{cooperativaId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "config": {
+    "logo": "url",
+    "primaryColor": "#FF5722",
+    "secondaryColor": "#FFC107",
+    "facebook": "url",
+    "instagram": "@handle",
+    "twitter": "@handle",
+    "whatsapp": "+593..."
+  }
+}
+```
+
+---
+
+## 🚌 Buses
+
+### Ver Todos los Buses
+```http
+GET /api/buses
+Authorization: Bearer {token}
+```
+
+### Ver Buses por Estado
+```http
+GET /api/buses?status=ACTIVE
+GET /api/buses?status=MAINTENANCE
+GET /api/buses?status=INACTIVE
+```
+
+### Ver Un Bus Específico
+```http
+GET /api/buses/{busId}
+Authorization: Bearer {token}
+```
+
+### Crear Bus
+```http
+POST /api/buses
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "cooperativaId": "{tu_cooperativaId}",
+  "placa": "PBA-5678",
+  "marca": "Mercedes Benz",
+  "modelo": "OF-1721",
+  "year": 2023,
+  "chasis": "9BM3841421B123456",
+  "numeroInterno": "025",
+  "totalSeats": 40,
+  "seatLayout": {
+    "rows": 10,
+    "columns": 4,
+    "seats": [...]
+  },
+  "hasAC": true,
+  "hasWifi": true,
+  "hasBathroom": true,
+  "hasTV": false,
+  "status": "ACTIVE",
+  "busGroupId": "{opcional}"
+}
+```
+
+### Actualizar Bus
+```http
+PUT /api/buses/{busId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "status": "MAINTENANCE",
+  "hasWifi": false,
+  "busGroupId": "{grupoId}"
+}
+```
+
+### Eliminar Bus
+```http
+DELETE /api/buses/{busId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 🚌 Grupos de Buses
+
+### Ver Grupos de Buses
+```http
+GET /api/bus-groups
+Authorization: Bearer {token}
+```
+
+### Ver Un Grupo Específico
+```http
+GET /api/bus-groups/{groupId}
+Authorization: Bearer {token}
+```
+
+### Crear Grupo de Buses
+```http
+POST /api/bus-groups
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "cooperativaId": "{tu_cooperativaId}",
+  "name": "Buses Modernos 2023",
+  "description": "Buses con A/C y WiFi"
+}
+```
+
+### Actualizar Grupo
+```http
+PUT /api/bus-groups/{groupId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Nuevo nombre",
+  "description": "Nueva descripción"
+}
+```
+
+### Eliminar Grupo
+```http
+DELETE /api/bus-groups/{groupId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 🛣️ Rutas
+
+### Ver Todas las Rutas
+```http
+GET /api/routes
+Authorization: Bearer {token}
+```
+
+### Ver Una Ruta Específica
+```http
+GET /api/routes/{routeId}
+Authorization: Bearer {token}
+```
+
+### Crear Ruta
+```http
+POST /api/routes
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "cooperativaId": "{tu_cooperativaId}",
+  "name": "Ambato - Quito",
+  "origin": "Ambato",
+  "destination": "Quito",
+  "basePrice": 4.50,
+  "estimatedDuration": 180,
+  "distanceKm": 135.5,
+  "stops": [
+    {
+      "name": "Latacunga",
+      "order": 1,
+      "priceFromOrigin": 2.00
+    },
+    {
+      "name": "Machachi",
+      "order": 2,
+      "priceFromOrigin": 3.00
+    }
+  ]
+}
+```
+
+### Actualizar Ruta
+```http
+PUT /api/routes/{routeId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "basePrice": 5.00,
+  "stops": [...]
+}
+```
+
+### Eliminar Ruta
+```http
+DELETE /api/routes/{routeId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 📅 Frecuencias
+
+### Ver Todas las Frecuencias
+```http
+GET /api/frequencies
+Authorization: Bearer {token}
+```
+
+### Ver Frecuencias de una Ruta
+```http
+GET /api/frequencies?routeId={routeId}
+Authorization: Bearer {token}
+```
+
+### Ver Una Frecuencia Específica
+```http
+GET /api/frequencies/{frequencyId}
+Authorization: Bearer {token}
+```
+
+### Crear Frecuencia
+```http
+POST /api/frequencies
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "cooperativaId": "{tu_cooperativaId}",
+  "routeId": "{routeId}",
+  "departureTime": "14:30",
+  "operatingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+  "antPermitNumber": "ANT-2025-001234",
+  "busGroupId": "{busGroupId}"
+}
+```
+
+### Actualizar Frecuencia
+```http
+PUT /api/frequencies/{frequencyId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "departureTime": "15:00",
+  "operatingDays": ["MONDAY", "WEDNESDAY", "FRIDAY"],
+  "busGroupId": "{nuevoGrupoId}"
+}
+```
+
+### Eliminar Frecuencia
+```http
+DELETE /api/frequencies/{frequencyId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 🗓️ Viajes
+
+### Ver Todos los Viajes
+```http
+GET /api/trips
+Authorization: Bearer {token}
+```
+
+### Ver Viajes por Fecha
+```http
+GET /api/trips?date=2025-12-01
+Authorization: Bearer {token}
+```
+
+### Ver Viajes por Bus
+```http
+GET /api/trips?busId={busId}
+Authorization: Bearer {token}
+```
+
+### Ver Viajes por Ruta
+```http
+GET /api/trips?routeId={routeId}
+Authorization: Bearer {token}
+```
+
+### Ver Viajes por Estado
+```http
+GET /api/trips?status=SCHEDULED
+GET /api/trips?status=IN_PROGRESS
+GET /api/trips?status=COMPLETED
+GET /api/trips?status=CANCELLED
+Authorization: Bearer {token}
+```
+
+### Ver Un Viaje Específico
+```http
+GET /api/trips/{tripId}
+Authorization: Bearer {token}
+```
+
+### Generar Viajes del Mes
+```http
+POST /api/trips/generate-monthly
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "year": 2025,
+  "month": 12
+}
+```
+
+### Actualizar Viaje (Asignar Chofer/Ayudante)
+```http
+PUT /api/trips/{tripId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "driverId": "{choferId}",
+  "assistantId": "{ayudanteId}",
+  "status": "IN_PROGRESS"
+}
+```
+
+### Cancelar Viaje
+```http
+DELETE /api/trips/{tripId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 👥 Personal (Staff)
+
+### Ver Todo el Personal
+```http
+GET /api/staff
+Authorization: Bearer {token}
+```
+
+### Ver Personal por Rol
+```http
+GET /api/staff?role=CHOFER
+GET /api/staff?role=OFICINISTA
+GET /api/staff?role=ADMIN
+Authorization: Bearer {token}
+```
+
+### Ver Un Empleado Específico
+```http
+GET /api/staff/{staffId}
+Authorization: Bearer {token}
+```
+
+### Crear Oficinista
+```http
+POST /api/staff
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "email": "oficinista@cooperativa.com",
+  "password": "TempPass123!",
+  "firstName": "María",
+  "lastName": "González",
+  "phone": "0991234567",
+  "cedula": "1723456789",
+  "role": "OFICINISTA"
+}
+```
+
+### Crear Chofer
+```http
+POST /api/staff
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "email": "chofer@cooperativa.com",
+  "password": "TempPass123!",
+  "firstName": "Pedro",
+  "lastName": "Ramírez",
+  "phone": "0991234567",
+  "cedula": "1723456790",
+  "role": "CHOFER",
+  "licenseNumber": "EC-0012345678",
+  "licenseType": "D",
+  "licenseExpiryDate": "2027-12-31",
+  "salary": 800.00,
+  "hireDate": "2024-01-15",
+  "emergencyContact": "Ana Ramírez",
+  "emergencyPhone": "0987654321",
+  "address": "Calle Los Pinos 123"
+}
+```
+
+### Crear Otro Admin
+```http
+POST /api/staff
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "email": "admin2@cooperativa.com",
+  "password": "TempPass123!",
+  "firstName": "Luis",
+  "lastName": "Morales",
+  "phone": "0991234567",
+  "cedula": "1723456791",
+  "role": "ADMIN"
+}
+```
+
+### Actualizar Personal
+```http
+PUT /api/staff/{staffId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "phone": "0998765432",
+  "salary": 850.00,
+  "licenseExpiryDate": "2028-12-31"
+}
+```
+
+### Dar de Baja Personal
+```http
+DELETE /api/staff/{staffId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 📊 Dashboard y Reportes
+
+### Dashboard de la Cooperativa
+```http
+GET /api/dashboard/cooperativa
+Authorization: Bearer {token}
+```
+
+### Dashboard con Rango de Fechas
+```http
+GET /api/dashboard/cooperativa?startDate=2025-12-01&endDate=2025-12-31
+Authorization: Bearer {token}
+```
+
+### Reporte Financiero Detallado
+```http
+GET /api/dashboard/financial-report
+Authorization: Bearer {token}
+```
+
+### Reporte Financiero con Filtros
+```http
+GET /api/dashboard/financial-report?startDate=2025-12-01&endDate=2025-12-31&busId={busId}
+Authorization: Bearer {token}
+```
+
+### Balance por Bus
+```http
+GET /api/dashboard/balance-by-bus
+Authorization: Bearer {token}
+```
+
+### Balance por Bus con Fechas
+```http
+GET /api/dashboard/balance-by-bus?startDate=2025-12-01&endDate=2025-12-31
+Authorization: Bearer {token}
+```
+
+### Ver Pagos Pendientes de Aprobación
+```http
+GET /api/dashboard/pending-payments
+Authorization: Bearer {token}
+```
+
+### Aprobar Pago
+```http
+PUT /api/dashboard/payment/{ticketId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "action": "approve"
+}
+```
+
+### Rechazar Pago
+```http
+PUT /api/dashboard/payment/{ticketId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "action": "reject",
+  "reason": "Comprobante no válido"
+}
+```
+
+---
+
+## 🎫 Tickets
+
+### Ver Todos los Tickets
+```http
+GET /api/tickets
+Authorization: Bearer {token}
+```
+
+### Ver Tickets por Viaje
+```http
+GET /api/tickets?tripId={tripId}
+Authorization: Bearer {token}
+```
+
+### Ver Un Ticket Específico
+```http
+GET /api/tickets/{ticketId}
+Authorization: Bearer {token}
+```
+
+### Cancelar Ticket
+```http
+DELETE /api/tickets/{ticketId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 🔧 Operaciones
+
+### Ver Manifiesto de Pasajeros de un Viaje
+```http
+GET /api/operations/manifest/{tripId}
+Authorization: Bearer {token}
+```
+
+### Ver Manifiesto por Parada
+```http
+GET /api/operations/manifest/{tripId}?stop=Latacunga
+Authorization: Bearer {token}
+```
+
+### Validar QR de Ticket
+```http
+POST /api/operations/validate-qr
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "qrCode": "codigo_qr_del_ticket",
+  "tripId": "{tripId}"
+}
+```
+
+### Registrar Gasto de Viaje
+```http
+POST /api/operations/expenses
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "tripId": "{tripId}",
+  "type": "FUEL",
+  "description": "Gasolina en Latacunga",
+  "amount": 45.50,
+  "receipt": "url_del_comprobante"
+}
+```
+
+### Ver Gastos de un Viaje
+```http
+GET /api/operations/expenses/{tripId}
+Authorization: Bearer {token}
+```
+
+---
+
+## 📋 Resumen de Endpoints por Categoría
+
+| Categoría | GET | POST | PUT | DELETE |
+|-----------|-----|------|-----|--------|
+| **Autenticación** | - | 2 | - | - |
+| **Cooperativa** | 1 | - | 1 | - |
+| **Buses** | 2 | 1 | 1 | 1 |
+| **Grupos de Buses** | 2 | 1 | 1 | 1 |
+| **Rutas** | 2 | 1 | 1 | 1 |
+| **Frecuencias** | 2 | 1 | 1 | 1 |
+| **Viajes** | 6 | 1 | 1 | 1 |
+| **Personal** | 3 | 1 | 1 | 1 |
+| **Dashboard** | 6 | - | 1 | - |
+| **Tickets** | 3 | - | - | 1 |
+| **Operaciones** | 3 | 2 | - | - |
+| **TOTAL** | **30** | **10** | **8** | **7** |
+
+---
+
+## 🔐 Restricciones del Rol ADMIN
+
+1. ✅ **Acceso Total** a su cooperativa
+2. ❌ **NO puede** ver datos de otras cooperativas
+3. ❌ **NO puede** crear cooperativas
+4. ❌ **NO puede** ver métricas globales (solo SUPER_ADMIN)
+5. ✅ **Puede** crear otros ADMIN para su cooperativa
+6. ✅ **Puede** crear todo tipo de personal (OFICINISTA, CHOFER, ADMIN)
+
+---
+
+## 📝 Notas Importantes
+
+### Autenticación
+- Todos los endpoints (excepto login) requieren token JWT
+- El token se obtiene al hacer login
+- Incluir en header: `Authorization: Bearer {token}`
+
+### Filtros Automáticos
+- El sistema automáticamente filtra por `cooperativaId`
+- Solo verás recursos de tu cooperativa
+- No necesitas especificar `cooperativaId` en queries
+
+### Paginación
+- Algunos endpoints pueden retornar muchos registros
+- Considera implementar paginación en el frontend
+
+### Fechas
+- Formato ISO 8601: `YYYY-MM-DD`
+- Ejemplo: `2025-12-01`
+
+### Horarios
+- Formato 24 horas: `HH:mm`
+- Ejemplo: `14:30`
+
+---
+
+**Última actualización:** Noviembre 29, 2025
+**Versión de API:** 1.0.0
+**Total de Endpoints:** 55
