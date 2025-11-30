@@ -15,7 +15,7 @@ export default function Home() {
     // Obtener detalles completos del viaje (incluye bus, route, paradas, etc.)
     const fetchFull = async () => {
       try {
-        const res = await tripService.getById(trip.id);
+        const res = await tripService.getPublicById(trip.id);
         const full = res.data?.data || res.data || trip;
         setSelectedTrip(full);
         setBookingComplete(false);
@@ -41,7 +41,7 @@ export default function Home() {
         if (!pending) return;
         const parsed = JSON.parse(pending);
         if (!parsed?.tripId) return;
-        const res = await tripService.getById(parsed.tripId);
+        const res = await tripService.getPublicById(parsed.tripId);
         const tripData = res.data?.data || res.data;
         if (tripData) {
           setSelectedTrip(tripData);

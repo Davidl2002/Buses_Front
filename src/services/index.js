@@ -17,6 +17,8 @@ export const tripService = {
   getAvailableDates: (origin, destination) => api.get('/trips/dates/available', { params: { origin, destination } }),
   getAll: () => api.get('/trips'),
   getById: (id) => api.get(`/trips/${id}`),
+  // Public endpoint to fetch trip details without authentication
+  getPublicById: (id) => api.get(`/trips/public/${id}`),
   getSeats: (id) => api.get(`/trips/${id}/seats`),
   getMyTrips: (params) => api.get('/trips', { params }),
   assignPersonnel: (id, data) => api.patch(`/trips/${id}/personnel`, data),

@@ -16,6 +16,7 @@ import { es } from 'date-fns/locale';
 
 export default function SeatSelection({ trip, onBack, onBookingComplete }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [seatMap, setSeatMap] = useState({ rows: 0, columns: 0, seats: [] });
   const [selectedSeat, setSelectedSeat] = useState(null);
   const [reservationSession, setReservationSession] = useState(null);
@@ -199,7 +200,7 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       if ((!seats || seats.length === 0)) {
         let fetchedLayout = null;
         try {
-          const tripRes = await tripService.getById(trip.id);
+          const tripRes = await tripService.getPublicById(trip.id);
           const tripData = tripRes.data?.data || tripRes.data;
           fetchedLayout = tripData?.seatLayout || tripData?.layout || null;
           // si el trip tiene bus con layout
@@ -353,14 +354,38 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
   };
 
   const getSeatPrice = (seatType) => {
-    const basePrice = trip.frequency?.price || trip.price || 0;
-    switch (seatType) {
+    // Determinar precio base: preferir frequency.price, luego trip.price, luego route.basePrice, luego trip.basePrice
+    const rawBase = trip.frequency?.price ?? trip.price ?? trip.route?.basePrice ?? trip.basePrice ?? 0;
+    const parsedBase = typeof rawBase === 'string' ? parseFloat(rawBase) || 0 : (rawBase || 0);
+
+    // Si el pasajero sube en una parada intermedia, intentar ajustar el precio usando route.stops.priceFromOrigin
+    let basePrice = parsedBase;
+    try {
+      const boarding = passengerData?.boardingStop || trip.origin;
+      const routeStops = trip.route?.stops || trip.route?.paradas || [];
+      if (boarding && Array.isArray(routeStops) && routeStops.length) {
+        const stop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
+        if (stop && (stop.priceFromOrigin !== undefined && stop.priceFromOrigin !== null)) {
+          // priceFromOrigin representa el precio desde el origen hasta esa parada.
+          // Para calcular el precio desde esa parada hasta el destino, restamos priceFromOrigin del base total.
+          const p = Number(stop.priceFromOrigin) || 0;
+          const adjusted = parsedBase - p;
+          if (adjusted > 0) basePrice = adjusted;
+        }
+      }
+    } catch (e) {
+      // ignore and use parsedBase
+    }
+
+    switch (String(seatType).toUpperCase()) {
       case 'VIP':
-        return basePrice * 1.3;
+        return +(basePrice * 1.3);
       case 'SEMI_CAMA':
-        return basePrice * 1.5;
+      case 'SEMI-CAMA':
+      case 'SEMI_CAMA':
+        return +(basePrice * 1.5);
       default:
-        return basePrice;
+        return +basePrice;
     }
   };
 
@@ -392,6 +417,25 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
     const secs = seconds % 60;
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Estadísticas de asientos para mostrar en la cabecera
+  const computeSeatStats = () => {
+    const seats = seatMap?.seats || [];
+    const total = seats.length || (trip.bus?.totalSeats || trip.totalSeats || 0);
+    const byType = { NORMAL: 0, VIP: 0, SEMI_CAMA: 0 };
+    const occupiedByType = { NORMAL: 0, VIP: 0, SEMI_CAMA: 0 };
+    seats.forEach(s => {
+      const t = String(s.type || 'NORMAL').toUpperCase().replace(/[-\s]/g, '_');
+      const typeKey = t.includes('VIP') ? 'VIP' : (t.includes('SEMI') || t.includes('CAMA') ? 'SEMI_CAMA' : 'NORMAL');
+      byType[typeKey] = (byType[typeKey] || 0) + 1;
+      if (s.isOccupied) occupiedByType[typeKey] = (occupiedByType[typeKey] || 0) + 1;
+    });
+    const occupiedTotal = seats.filter(s => s.isOccupied).length;
+    const availableTotal = Math.max(total - occupiedTotal, 0);
+    return { total, byType, occupiedByType, occupiedTotal, availableTotal };
+  };
+
+  const seatStats = computeSeatStats();
 
   const getSeatIcon = (seat, isSelected) => {
     if (seat.isOccupied) return <span>🚫</span>;
@@ -478,6 +522,37 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
                 </div>
               </div>
             )}
+          </div>
+          {/* Paradas y estadísticas de asientos */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm font-medium">Paradas</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(trip.route?.stops || trip.route?.paradas || []).map((s, i) => (
+                  <div key={i} className="px-3 py-1 bg-gray-100 rounded text-sm">
+                    {s.name || s}
+                    {s.priceFromOrigin !== undefined && (
+                      <span className="ml-2 text-xs text-muted-foreground">(+{formatPrice(Number(s.priceFromOrigin))})</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium">Asientos</p>
+              <p className="text-sm mt-2">Total: {seatStats.total}</p>
+              <p className="text-sm">Disponibles: {seatStats.availableTotal}</p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium">Ocupación por tipo</p>
+              <div className="text-sm mt-2">
+                <div>Normal: {seatStats.occupiedByType.NORMAL || 0} / {seatStats.byType.NORMAL || 0}</div>
+                <div>VIP: {seatStats.occupiedByType.VIP || 0} / {seatStats.byType.VIP || 0}</div>
+                <div>Semi-cama: {seatStats.occupiedByType.SEMI_CAMA || 0} / {seatStats.byType.SEMI_CAMA || 0}</div>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
