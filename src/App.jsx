@@ -11,6 +11,8 @@ import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import Profile from '@/pages/Profile';
 import MyTickets from '@/pages/MyTickets';
+import PaypalSuccess from '@/pages/PaypalSuccess';
+import PaypalRedirect from '@/pages/PaypalRedirect';
 import AdminLayout from '@/components/admin/AdminLayout';
 import MyTrips from '@/pages/driver/MyTrips';
 import DriverManifest from '@/pages/driver/Manifest';
@@ -42,6 +44,8 @@ function App() {
                     <Route path="/" element={<Home />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
+                    <Route path="/payment/success" element={<PaypalSuccess />} />
+                    <Route path="/payment/redirect" element={<PaypalRedirect />} />
 
                     {/* Profile Route (All authenticated users) */}
                     <Route

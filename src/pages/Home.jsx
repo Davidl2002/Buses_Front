@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import TripSearch from '@/components/public/TripSearch';
 import SeatSelection from '@/components/public/SeatSelection';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { tripService } from '@/services';
+import { ticketService } from '@/services';
+import toast from 'react-hot-toast';
 
 export default function Home() {
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -54,6 +57,20 @@ export default function Home() {
     resume();
   }, []);
 
+  // Leer state pasado por la navegación (p.ej. desde PayPalSuccess)
+  const location = useLocation();
+  useEffect(() => {
+    const s = location.state;
+    if (s && s.bookingComplete) {
+      setCompletedBooking(s.completedBooking || null);
+      setBookingComplete(true);
+      if (s.trip) setSelectedTrip(s.trip);
+    }
+    // limpiar el state de la ubicación para evitar reaplicar
+    try { window.history.replaceState({}, document.title); } catch (e) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleBack = () => {
     setSelectedTrip(null);
     setBookingComplete(false);
@@ -69,6 +86,45 @@ export default function Home() {
     setSelectedTrip(null);
     setBookingComplete(false);
     setCompletedBooking(null);
+  };
+
+  const handleDownloadTicket = async () => {
+    if (!completedBooking) return;
+    const id = completedBooking.id || completedBooking.ticketId || completedBooking._id;
+    // If ticket contains a direct URL to PDF, open it
+    const directUrl = completedBooking.pdfUrl || completedBooking.downloadUrl || completedBooking.url;
+    if (directUrl) {
+      window.open(directUrl, '_blank');
+      return;
+    }
+
+    try {
+      const res = await ticketService.downloadPdf(id);
+      const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ticket_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error descargando PDF del ticket:', err);
+      // fallback: si backend no provee /tickets/:id/pdf, intentar abrir ticketService.getById para ver si hay url
+      try {
+        const info = await ticketService.getById(id);
+        const t = info.data?.data || info.data;
+        const url = t?.pdfUrl || t?.downloadUrl || t?.url;
+        if (url) {
+          window.open(url, '_blank');
+          return;
+        }
+      } catch (e) {
+        console.warn('No se pudo obtener ticket info para fallback:', e);
+      }
+      toast.error('No se pudo descargar el ticket. Revisa tu correo o contacta soporte.');
+    }
   };
 
   return (
@@ -147,7 +203,7 @@ export default function Home() {
                   <Button onClick={handleNewSearch} className="flex-1">
                     Nueva búsqueda
                   </Button>
-                  <Button variant="outline">
+                  <Button variant="outline" onClick={handleDownloadTicket}>
                     Descargar ticket
                   </Button>
                 </div>

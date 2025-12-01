@@ -35,6 +35,11 @@ export const ticketService = {
   cancel: (id) => api.patch(`/tickets/${id}/cancel`),
   initiatePayPal: (data) => api.post('/tickets/payment/paypal/initiate', data),
   capturePayPal: (data) => api.post('/tickets/payment/paypal/capture', data),
+  // Execute PayPal payment after user approves on PayPal side
+  executePayPal: (data) => api.post('/tickets/payment/paypal/execute', data),
+  // Descargar PDF del ticket (blob). Backend may expose /tickets/:id/pdf or /tickets/:id/download
+  downloadPdf: (id) => api.get(`/tickets/${id}/pdf`, { responseType: 'blob' }),
+  getById: (id) => api.get(`/tickets/${id}`),
 };
 
 // Cooperativas
@@ -112,6 +117,8 @@ export const enhancedTicketService = {
   getById: (id) => api.get(`/tickets/${id}`),
   validate: (id) => api.patch(`/tickets/${id}/validate`),
   cancel: (id) => api.delete(`/tickets/${id}`),
+  // Descargar PDF del ticket (blob). Backend may expose /tickets/:id/pdf or /tickets/:id/download
+  downloadPdf: (id) => api.get(`/tickets/${id}/pdf`, { responseType: 'blob' }),
 };
 
 // Trip Management (enhanced)
