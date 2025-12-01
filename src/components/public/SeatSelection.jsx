@@ -132,7 +132,7 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         }
       }
       // Llamar al backend para obtener layout y ocupados
-      console.log('🎯 CARGANDO ASIENTOS PARA TRIP ID:', trip.id);
+      console.log('CARGANDO ASIENTOS PARA TRIP ID:', trip.id);
       const response = await ticketService.getSeatMap(trip.id);
       const data = response.data?.data || {};
       const layout = data.seatLayout || {};
@@ -326,24 +326,131 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
 
     try {
       setLoading(true);
-      
+      // 1) REFRESCAR mapa de asientos para confirmar disponibilidad (race condition)
+      try {
+        const seatMapRes = await ticketService.getSeatMap(trip.id);
+        // Normalizar distintas formas de respuesta del backend para extraer los asientos ocupados
+        const smData = seatMapRes.data?.data ?? seatMapRes.data ?? {};
+        let occupiedRaw = smData?.occupiedSeats ?? smData?.occupied ?? smData?.occupiedList ?? smData;
+
+        let occupiedArr = [];
+        if (Array.isArray(occupiedRaw)) {
+          occupiedArr = occupiedRaw;
+        } else if (occupiedRaw && typeof occupiedRaw === 'object') {
+          // Caso: { "12": true, "13": true } o { seats: [...] }
+          if (Array.isArray(occupiedRaw.seats)) {
+            occupiedArr = occupiedRaw.seats;
+          } else if (Array.isArray(occupiedRaw.occupiedSeats)) {
+            occupiedArr = occupiedRaw.occupiedSeats;
+          } else {
+            occupiedArr = Object.keys(occupiedRaw);
+          }
+        } else if (typeof occupiedRaw === 'string') {
+          // CSV "1,2,3" u otra forma
+          occupiedArr = occupiedRaw.split(',').map(s => s.trim()).filter(Boolean);
+        } else {
+          occupiedArr = [];
+        }
+
+        const occupiedSet = new Set(occupiedArr.map(x => String(x)));
+        if (occupiedSet.has(String(selectedSeat.number))) {
+          toast.error('El asiento ya no está disponible. Por favor selecciona otro.');
+          await loadSeatMap();
+          return;
+        }
+      } catch (err) {
+        // Si falla la comprobación, no bloquear; intentar crear ticket y manejar errores del backend
+        console.warn('No se pudo refrescar seat-map antes de crear ticket:', err);
+      }
+
+      // 2) Validaciones front-side (según esquema Zod del backend)
+      if ((passengerData.cedula || '').length < 10) {
+        toast.error('La cédula debe tener al menos 10 caracteres');
+        return;
+      }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(passengerData.email)) {
+        toast.error('Ingresa un email válido');
+        return;
+      }
+
+      // 3) Construir payload para crear ticket
       const bookingData = {
         tripId: trip.id,
         seatNumber: selectedSeat.number,
         passengerName: passengerData.name,
         passengerCedula: passengerData.cedula,
         passengerEmail: passengerData.email,
+        passengerPhone: passengerData.phone || passengerData.mobile || undefined,
         boardingStop: passengerData.boardingStop,
         dropoffStop: passengerData.dropoffStop,
-        paymentMethod: passengerData.paymentMethod
+        paymentMethod: passengerData.paymentMethod || 'CASH'
       };
 
-      const response = await ticketService.create(bookingData);
-      
-      toast.success('¡Reserva completada exitosamente!');
-      
-      if (onBookingComplete) {
-        onBookingComplete(response.data.data);
+      // 4) Crear ticket (autenticado). El backend validará disponibilidad y retornará el ticket o error.
+      let createRes;
+      try {
+        createRes = await ticketService.create(bookingData);
+      } catch (err) {
+        console.error('Error creating ticket:', err);
+        const status = err.response?.status;
+        if (status === 400 || status === 409) {
+          toast.error('Asiento no disponible o conflicto. Refrescando mapa...');
+          await loadSeatMap();
+          setBookingStep('seats');
+          return;
+        }
+        if (status === 401) {
+          toast.error('Tu sesión expiró. Por favor inicia sesión de nuevo.');
+          return;
+        }
+        toast.error('Error al crear el ticket');
+        return;
+      }
+
+      const ticket = createRes.data?.data || createRes.data;
+
+      // 5) Si el método de pago es PAYPAL, iniciar flujo de pago
+      if (bookingData.paymentMethod === 'PAYPAL') {
+        try {
+          const payRes = await ticketService.initiatePayPal({ ticketId: ticket.id || ticket.ticketId || ticket._id });
+          const paymentData = payRes.data?.data || payRes.data;
+          const approvalUrl = paymentData?.approvalUrl || paymentData?.approval_url || paymentData?.approvalLink;
+          if (approvalUrl) {
+            // Intentar abrir la URL de aprobación en una nueva ventana.
+            // Si el popup es bloqueado por el navegador, redirigir la pestaña actual.
+            try {
+              // Guardar la approvalUrl temporalmente en sessionStorage y abrir una pestaña
+              // que carga una ruta interna `/payment/redirect` para mantener la pestaña dentro
+              // del dominio de la app antes de redirigir a PayPal.
+              sessionStorage.setItem('paypalApprovalUrl', approvalUrl);
+              const win = window.open('/payment/redirect', '_blank');
+              if (!win || win.closed || typeof win.closed === 'undefined') {
+                // Popup blocked — fallback a redirección directa
+                window.location.href = approvalUrl;
+              } else {
+                win.focus();
+              }
+            } catch (e) {
+              // Fallback seguro
+              window.location.href = approvalUrl;
+            }
+            toast.success('Se abrió la ventana de pago. Completa la operación en PayPal.');
+            // El backend debe llamar a execute en el callback de PayPal o el front debe capturar el retorno
+          } else {
+            toast('No se obtuvo approvalUrl de PayPal');
+          }
+        } catch (err) {
+          // Mostrar más detalles para ayudar a depurar el 500 del backend
+          console.error('Error iniciando PayPal:', err);
+          console.error('Response data:', err.response?.data);
+          console.error('Response status:', err.response?.status);
+          const serverMsg = err.response?.data?.message || err.response?.data || err.message;
+          toast.error(typeof serverMsg === 'string' ? serverMsg : 'Error iniciando pago PayPal');
+        }
+      } else {
+        // Efectivo o transferencia: ya creado el ticket, backend puede marcar PAID/CONFIRMED según implementación
+        toast.success('¡Reserva completada exitosamente!');
+        if (onBookingComplete) onBookingComplete(ticket);
       }
     } catch (error) {
       console.error('Error creating booking:', error);
@@ -386,7 +493,7 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         return +(basePrice * 1.5);
       default:
         return +basePrice;
-    }
+    } 
   };
 
   // rows: number of rows; physicalCols: number of physical columns (e.g. 5 with center aisle)
