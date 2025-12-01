@@ -76,8 +76,14 @@ export default function TripSearch({ onSelectTrip }) {
         setDestinationCities(JSON.parse(cached));
         return;
       }
-
-      const response = await tripService.getDestinationCities(origin);
+      // Prefer public endpoint for destination cities (no auth). Fallback to internal if not available.
+      let response;
+      try {
+        response = await tripService.getDestinationCitiesPublic(origin);
+      } catch (pubErr) {
+        // fallback to standard endpoint
+        response = await tripService.getDestinationCities(origin);
+      }
       let apiDestinations = response.data.data || [];
       // normalize to objects
       apiDestinations = (apiDestinations || []).map(d => (typeof d === 'string' ? { id: d, name: d } : { id: d.id || d._id || d.name || JSON.stringify(d), name: d.name || d.label || d.city || String(d) }));
@@ -86,20 +92,28 @@ export default function TripSearch({ onSelectTrip }) {
       try {
         const allRes = await tripService.getAll();
         const allTrips = allRes.data?.data || allRes.data || [];
-        const stops = new Set(apiDestinations.map(d => String(d)));
-        allTrips.forEach(t => {
+        // Filtrar solo trips cuyo origen coincida con el origen seleccionado
+        const relevantTrips = (allTrips || []).filter(t => {
+          const tripOrigin = (t.origin || t.route?.origin || t.from || t.departureCity || t.startCity || '').toString().trim();
+          return tripOrigin && tripOrigin.toLowerCase() === String(origin).toLowerCase();
+        });
+
+        const stops = new Set((apiDestinations || []).map(d => String(d?.name ?? d?.id ?? d)));
+        relevantTrips.forEach(t => {
           try {
             const routeStops = t.route?.stops || t.stops || t.route?.paradas || [];
             if (Array.isArray(routeStops)) {
               routeStops.forEach(s => {
-                if (s && String(s).trim().length > 0 && String(s).toLowerCase() !== String(origin).toLowerCase()) {
-                  stops.add(String(s));
+                const stopName = s && (s.name || s.city || s) ;
+                if (stopName && String(stopName).trim().length > 0 && String(stopName).toLowerCase() !== String(origin).toLowerCase()) {
+                  stops.add(String(stopName));
                 }
               });
             }
             const dest = t.route?.destination || t.destination;
-            if (dest && String(dest).trim().length > 0 && String(dest).toLowerCase() !== String(origin).toLowerCase()) {
-              stops.add(String(dest));
+            const destName = dest && (dest.name || dest.city || dest);
+            if (destName && String(destName).trim().length > 0 && String(destName).toLowerCase() !== String(origin).toLowerCase()) {
+              stops.add(String(destName));
             }
           } catch (e) {}
         });
