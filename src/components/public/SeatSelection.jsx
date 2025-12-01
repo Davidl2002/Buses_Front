@@ -493,7 +493,7 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         return +(basePrice * 1.5);
       default:
         return +basePrice;
-    }
+    } 
   };
 
   // rows: number of rows; physicalCols: number of physical columns (e.g. 5 with center aisle)
