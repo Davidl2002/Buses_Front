@@ -14,8 +14,6 @@ export const tripService = {
   search: (params) => api.get('/trips/search', { params }),
   getOriginCities: () => api.get('/trips/cities/origins'),
   getDestinationCities: (origin) => api.get('/trips/cities/destinations', { params: { origin } }),
-  // Public endpoint for destinations by origin (no auth)
-  getDestinationCitiesPublic: (origin) => api.get('/trips/public/cities/destinations', { params: { origin } }),
   getAvailableDates: (origin, destination) => api.get('/trips/dates/available', { params: { origin, destination } }),
   getAll: () => api.get('/trips'),
   getById: (id) => api.get(`/trips/${id}`),
