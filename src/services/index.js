@@ -17,6 +17,8 @@ export const tripService = {
   getAvailableDates: (origin, destination) => api.get('/trips/dates/available', { params: { origin, destination } }),
   getAll: () => api.get('/trips'),
   getById: (id) => api.get(`/trips/${id}`),
+  // Public endpoint to fetch trip details without authentication
+  getPublicById: (id) => api.get(`/trips/public/${id}`),
   getSeats: (id) => api.get(`/trips/${id}/seats`),
   getMyTrips: (params) => api.get('/trips', { params }),
   assignPersonnel: (id, data) => api.patch(`/trips/${id}/personnel`, data),
@@ -33,6 +35,11 @@ export const ticketService = {
   cancel: (id) => api.patch(`/tickets/${id}/cancel`),
   initiatePayPal: (data) => api.post('/tickets/payment/paypal/initiate', data),
   capturePayPal: (data) => api.post('/tickets/payment/paypal/capture', data),
+  // Execute PayPal payment after user approves on PayPal side
+  executePayPal: (data) => api.post('/tickets/payment/paypal/execute', data),
+  // Descargar PDF del ticket (blob). Backend may expose /tickets/:id/pdf or /tickets/:id/download
+  downloadPdf: (id) => api.get(`/tickets/${id}/pdf`, { responseType: 'blob' }),
+  getById: (id) => api.get(`/tickets/${id}`),
 };
 
 // Cooperativas
@@ -110,6 +117,8 @@ export const enhancedTicketService = {
   getById: (id) => api.get(`/tickets/${id}`),
   validate: (id) => api.patch(`/tickets/${id}/validate`),
   cancel: (id) => api.delete(`/tickets/${id}`),
+  // Descargar PDF del ticket (blob). Backend may expose /tickets/:id/pdf or /tickets/:id/download
+  downloadPdf: (id) => api.get(`/tickets/${id}/pdf`, { responseType: 'blob' }),
 };
 
 // Trip Management (enhanced)

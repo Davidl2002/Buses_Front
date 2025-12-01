@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ticketService } from '@/services';
 import toast from 'react-hot-toast';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Ticket, Calendar, MapPin, Download, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -106,9 +106,19 @@ export default function MyTickets() {
                       <div className="flex items-center gap-2 text-gray-600">
                         <Calendar className="h-4 w-4" />
                         <span>
-                          {format(new Date(ticket.trip?.departureDate), 'PPP', { locale: es })}
-                          {' • '}
-                          {ticket.trip?.departureTime}
+                          {(() => {
+                            const raw = ticket.trip?.departureDate;
+                            let d = null;
+                            if (!raw) return 'Fecha no disponible';
+                            try {
+                              // try ISO parse first
+                              d = typeof raw === 'string' ? parseISO(raw) : new Date(raw);
+                            } catch (e) {
+                              d = new Date(raw);
+                            }
+                            if (!isValid(d)) return 'Fecha no disponible';
+                            return `${format(d, 'PPP', { locale: es })} • ${ticket.trip?.departureTime || ''}`;
+                          })()}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-gray-600">
@@ -126,7 +136,7 @@ export default function MyTickets() {
                     </div>
 
                     <div className="mt-3 text-lg font-bold text-primary">
-                      ${ticket.price.toFixed(2)}
+                      ${Number(ticket.price || 0).toFixed(2)}
                     </div>
                   </div>
 

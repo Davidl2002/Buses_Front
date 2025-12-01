@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, MapPin, Calendar, Filter, Bus, Clock, Wifi, Wind, Users } from 'lucide-react';
+import { Search, MapPin, Calendar, Filter, Bus, Clock, Wifi, Wind, Users, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,7 @@ export default function TripSearch({ onSelectTrip }) {
     hasAC: false,
     hasWifi: false,
     hasBathroom: false,
+    hasTV: false,
   });
   
   const [originCities, setOriginCities] = useState([]);
@@ -149,6 +150,7 @@ export default function TripSearch({ onSelectTrip }) {
       if (formData.hasWifi) amenities.push('wifi');
       if (formData.hasBathroom) amenities.push('toilet');
       if (formData.hasAC) amenities.push('ac');
+      if (formData.hasTV) amenities.push('tv');
 
       const searchParams = {
         origin: formData.origin,
@@ -158,16 +160,140 @@ export default function TripSearch({ onSelectTrip }) {
         isDirect: false
       };
 
+      // Hint to backend to include bus details in search results when supported
+      searchParams.include = 'bus';
+
+      if (amenities.length) searchParams.amenities = amenities.join(',');
       if (amenities.length) searchParams.amenities = amenities.join(',');
 
       const response = await tripService.search(searchParams);
       const tripsData = response.data?.data || response.data || [];
-      setTrips(tripsData);
-      
-      if (tripsData.length === 0) {
-        toast.error('No se encontraron viajes');
-      } else {
-        toast.success(`${tripsData.length} viajes encontrados`);
+
+      // Helper para comprobar amenities en variantes de propiedades del objeto `bus`
+      const hasAmenity = (bus = {}, names = []) => {
+        if (!bus) return false;
+        for (const n of names) {
+          if (Object.prototype.hasOwnProperty.call(bus, n) && !!bus[n]) return true;
+        }
+        return false;
+      };
+
+      const matchesAmenities = (tripObj) => {
+        const bus = tripObj.bus || {};
+        if (formData.hasAC) {
+          if (!hasAmenity(bus, ['hasAC', 'hasAc', 'has_ac', 'ac', 'has_air', 'air'])) return false;
+        }
+        if (formData.hasWifi) {
+          if (!hasAmenity(bus, ['hasWifi', 'has_wifi', 'wifi', 'hasWiFi'])) return false;
+        }
+        if (formData.hasBathroom) {
+          if (!hasAmenity(bus, ['hasBathroom', 'has_bathroom', 'hasToilet', 'has_toilet', 'toilet', 'hasWC'])) return false;
+        }
+        if (formData.hasTV) {
+          if (!hasAmenity(bus, ['hasTV', 'has_tv', 'tv', 'hasTelevision', 'television'])) return false;
+        }
+        return true;
+      };
+
+      // Normalizar campos para que la UI muestre la información real cuando venga del backend
+      const normalized = (tripsData || []).map(t => {
+        const bus = t.bus || t.vehicle || t.coach || {};
+        const placa = bus.placa || bus.plate || bus.plateNumber || bus.licensePlate || bus.registration || bus.name || '';
+        const model = bus.modelo || bus.model || bus.marca || bus.brand || bus.make || bus.manufacturer || '';
+
+        // Price fallbacks: frequency.price, trip.price, route.basePrice, trip.basePrice
+        const rawPrice = t.frequency?.price ?? t.price ?? t.fare ?? t.cost ?? t.route?.basePrice ?? t.basePrice ?? 0;
+        const price = typeof rawPrice === 'string' ? parseFloat(rawPrice) || 0 : (rawPrice || 0);
+
+        const capacity = bus.totalSeats || bus.capacity || t.busCapacity || t.capacity || t.totalSeats || 40;
+        const soldSeats = t.soldSeats ?? t.occupiedSeats ?? t.seatsSold ?? t.ticketsSold ?? 0;
+        const departureTime = t.departureTime || t.frequency?.departureTime || t.startTime || t.time || null;
+        const date = t.date || t.frequency?.date || t.startDate || t.dateOfTravel || null;
+        const status = t.status || t.state || t.tripStatus || null;
+
+        return {
+          ...t,
+          bus: { ...bus, placa, model },
+          price,
+          capacity,
+          soldSeats,
+          departureTime,
+          date,
+          status
+        };
+      });
+
+      setTrips(normalized);
+
+      // Si el backend de búsqueda no incluye route/bus completos, intentar obtener detalles públicos completos
+      try {
+        const needsFetch = normalized.filter(t => !t.route || !t.bus || !t.route?.stops || (Array.isArray(t.route?.stops) && t.route.stops.length === 0));
+        if (needsFetch.length) {
+          const details = await Promise.all(needsFetch.map(async (t) => {
+            try {
+              const res = await tripService.getPublicById(t.id);
+              return res.data?.data || res.data || null;
+            } catch (err) {
+              return null;
+            }
+          }));
+
+          const detailsMap = new Map();
+          details.forEach(d => { if (d && d.id) detailsMap.set(d.id, d); });
+
+          const merged = normalized.map(t => {
+            const d = detailsMap.get(t.id);
+            if (!d) return t;
+            const mergedBus = d.bus || t.bus || {};
+            const placa = mergedBus.placa || mergedBus.plate || mergedBus.plateNumber || mergedBus.licensePlate || mergedBus.registration || mergedBus.name || '';
+            const model = mergedBus.modelo || mergedBus.model || mergedBus.marca || mergedBus.brand || mergedBus.make || '';
+
+            const rawPrice = d.frequency?.price ?? d.price ?? d.route?.basePrice ?? d.basePrice ?? t.price ?? 0;
+            const price = typeof rawPrice === 'string' ? parseFloat(rawPrice) || 0 : (rawPrice || 0);
+
+            const capacity = mergedBus.totalSeats || mergedBus.capacity || d.bus?.capacity || t.capacity || 40;
+            const soldSeats = d.soldSeats ?? t.soldSeats ?? 0;
+
+            return {
+              ...t,
+              ...d,
+              frequency: d.frequency || t.frequency,
+              route: d.route || t.route,
+              bus: { ...mergedBus, placa, model },
+              price,
+              departureTime: d.departureTime || t.departureTime || d.frequency?.departureTime,
+              date: d.date || t.date || d.frequency?.date,
+              capacity,
+              soldSeats
+            };
+          });
+
+          setTrips(merged);
+        }
+      } catch (err) {
+        // no bloquear si falla la llamada adicional
+        console.warn('No se pudieron obtener detalles públicos adicionales:', err);
+      }
+
+      // Aplicar filtrado en cliente según amenities seleccionadas (por si el backend no lo filtró)
+      try {
+        const current = (Array.isArray(tripsData) && tripsData.length > 0) ? (trips.length ? trips : (await Promise.resolve([]))) : [];
+        // `trips` state already contains merged or normalized set via setTrips above; usarlo
+        const sourceList = (trips && trips.length) ? trips : (normalized || []);
+        const finalFiltered = sourceList.filter(matchesAmenities);
+        setTrips(finalFiltered);
+        if (finalFiltered.length === 0) {
+          toast.error('No se encontraron viajes con los filtros seleccionados');
+        } else {
+          toast.success(`${finalFiltered.length} viajes encontrados`);
+        }
+      } catch (err) {
+        // si algo falla en el filtrado, mantener la lista original
+        if (tripsData.length === 0) {
+          toast.error('No se encontraron viajes');
+        } else {
+          toast.success(`${tripsData.length} viajes encontrados`);
+        }
       }
     } catch (error) {
       toast.error('Error al buscar viajes');
@@ -295,6 +421,16 @@ export default function TripSearch({ onSelectTrip }) {
                 <Users className="h-4 w-4 text-purple-500" />
                 <span className="text-sm">Baño</span>
               </label>
+
+              <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={formData.hasTV}
+                    onChange={(e) => setFormData(prev => ({ ...prev, hasTV: e.target.checked }))}
+                  />
+                  <Monitor className="h-4 w-4 text-yellow-500" />
+                  <span className="text-sm">TV</span>
+                </label>
             </div>
 
             <Button 
@@ -323,7 +459,7 @@ export default function TripSearch({ onSelectTrip }) {
                       </h4>
                       <div className="text-right">
                         <p className="text-2xl font-bold text-primary">
-                          {formatPrice(trip.frequency?.price || trip.price || 0)}
+                          {formatPrice(trip.price || 0)}
                         </p>
                       </div>
                     </div>
@@ -333,7 +469,7 @@ export default function TripSearch({ onSelectTrip }) {
                         <Clock className="h-4 w-4 text-muted-foreground" />
                         <div>
                           <p className="text-sm font-medium">Salida</p>
-                          <p className="text-sm">{trip.frequency?.departureTime || 'N/A'}</p>
+                          <p className="text-sm">{trip.departureTime || trip.frequency?.departureTime || 'N/A'}</p>
                         </div>
                       </div>
 
@@ -341,7 +477,7 @@ export default function TripSearch({ onSelectTrip }) {
                         <Bus className="h-4 w-4 text-muted-foreground" />
                         <div>
                           <p className="text-sm font-medium">Bus</p>
-                          <p className="text-sm">{trip.bus?.placa || 'N/A'}</p>
+                          <p className="text-sm">{(trip.bus?.placa ? trip.bus.placa : 'N/A')}{trip.bus?.model ? ` - ${trip.bus.model}` : ''}</p>
                         </div>
                       </div>
 
@@ -349,7 +485,7 @@ export default function TripSearch({ onSelectTrip }) {
                         <Users className="h-4 w-4 text-muted-foreground" />
                         <div>
                           <p className="text-sm font-medium">Disponibles</p>
-                          <p className="text-sm">{Math.max((trip.bus?.capacity || 40) - (trip.soldSeats || 0), 1)} asientos</p>
+                          <p className="text-sm">{Math.max((trip.capacity || (trip.bus?.capacity || 40)) - (trip.soldSeats || 0), 0)} asientos</p>
                         </div>
                       </div>
                     </div>
@@ -370,7 +506,29 @@ export default function TripSearch({ onSelectTrip }) {
                           <Users className="h-3 w-3 mr-1" />Baño
                         </Badge>
                       )}
+                      {trip.bus?.hasTV && (
+                        <Badge variant="secondary">
+                          <Monitor className="h-3 w-3 mr-1" />TV
+                        </Badge>
+                      )}
                     </div>
+
+                    {/* Mostrar paradas si existen */}
+                    {trip.route?.stops && Array.isArray(trip.route.stops) && trip.route.stops.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-sm font-medium mb-2">Paradas:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {trip.route.stops.map((s, idx) => (
+                            <div key={idx} className="px-3 py-1 bg-gray-100 rounded text-sm">
+                              <strong>{s.name || s}</strong>
+                              {s.priceFromOrigin !== undefined && s.priceFromOrigin !== null && (
+                                <span className="ml-2 text-xs text-muted-foreground">(+{formatPrice(Number(s.priceFromOrigin))})</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <Button 
                       onClick={() => onSelectTrip && onSelectTrip(trip)} 
