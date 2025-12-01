@@ -494,7 +494,7 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       default:
         return +basePrice;
     } 
-  };
+  }; 
 
   // rows: number of rows; physicalCols: number of physical columns (e.g. 5 with center aisle)
   const generateSeatsMatrix = (rows, physicalCols, totalSeats) => {
