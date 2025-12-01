@@ -21,10 +21,7 @@ export default function CooperativaSettings() {
     email: '',
     phone: '',
     address: '',
-    facebook: '',
-    twitter: '',
-    instagram: '',
-    whatsapp: ''
+    // redes sociales eliminadas: facebook/twitter/instagram/whatsapp
   });
 
   useEffect(() => {
@@ -48,10 +45,7 @@ export default function CooperativaSettings() {
         logo: coop.config?.logo || '',
         primaryColor: coop.config?.primaryColor || '#1a56db',
         secondaryColor: coop.config?.secondaryColor || '#0e7490',
-        facebook: coop.config?.facebook || '',
-        twitter: coop.config?.twitter || '',
-        instagram: coop.config?.instagram || '',
-        whatsapp: coop.config?.whatsapp || ''
+        // redes sociales removidas
       });
 
       if (coop.config?.logo) {
@@ -124,10 +118,7 @@ export default function CooperativaSettings() {
           logo: formData.logo || cooperativa.config?.logo,
           primaryColor: formData.primaryColor || cooperativa.config?.primaryColor,
           secondaryColor: formData.secondaryColor || cooperativa.config?.secondaryColor,
-          facebook: formData.facebook !== undefined ? formData.facebook : cooperativa.config?.facebook,
-          twitter: formData.twitter !== undefined ? formData.twitter : cooperativa.config?.twitter,
-          instagram: formData.instagram !== undefined ? formData.instagram : cooperativa.config?.instagram,
-          whatsapp: formData.whatsapp !== undefined ? formData.whatsapp : cooperativa.config?.whatsapp
+          // redes sociales removidas
         }
       };
 
@@ -331,62 +322,7 @@ export default function CooperativaSettings() {
           </CardContent>
         </Card>
 
-        {/* Redes Sociales */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Redes Sociales</CardTitle>
-            <CardDescription>
-              Enlaces a las redes sociales de tu cooperativa
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="facebook">Facebook</Label>
-                <Input
-                  id="facebook"
-                  type="url"
-                  value={formData.facebook}
-                  onChange={(e) => setFormData({ ...formData, facebook: e.target.value })}
-                  placeholder="https://facebook.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="instagram">Instagram</Label>
-                <Input
-                  id="instagram"
-                  type="url"
-                  value={formData.instagram}
-                  onChange={(e) => setFormData({ ...formData, instagram: e.target.value })}
-                  placeholder="https://instagram.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="twitter">Twitter / X</Label>
-                <Input
-                  id="twitter"
-                  type="url"
-                  value={formData.twitter}
-                  onChange={(e) => setFormData({ ...formData, twitter: e.target.value })}
-                  placeholder="https://twitter.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="whatsapp">WhatsApp</Label>
-                <Input
-                  id="whatsapp"
-                  type="tel"
-                  value={formData.whatsapp}
-                  onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
-                  placeholder="+593 99 999 9999"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Redes Sociales removidas en configuración */}
 
         {/* Botón Guardar */}
         <div className="flex justify-end">

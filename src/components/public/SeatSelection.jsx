@@ -489,7 +489,6 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         return +(basePrice * 1.3);
       case 'SEMI_CAMA':
       case 'SEMI-CAMA':
-      case 'SEMI_CAMA':
         return +(basePrice * 1.5);
       default:
         return +basePrice;
