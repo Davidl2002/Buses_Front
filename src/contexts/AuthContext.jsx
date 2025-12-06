@@ -27,16 +27,35 @@ export const AuthProvider = ({ children }) => {
         try {
           const parsed = JSON.parse(storedUser);
           setUser(parsed);
-          // Si el usuario tiene cooperativaId, cargar su cooperativa
-          try {
-            if (parsed.cooperativaId) {
-              const coopRes = await cooperativaService.getById(parsed.cooperativaId);
-              setCooperativa(coopRes.data.data || null);
+          
+          // SUPER_ADMIN: cargar cooperativa seleccionada
+          if (parsed.role === 'SUPER_ADMIN') {
+            try {
+              const activeCoopId = localStorage.getItem('activeCooperativaId');
+              if (activeCoopId) {
+                const coopRes = await cooperativaService.getById(activeCoopId);
+                setCooperativa(coopRes.data.data || null);
+              }
+            } catch (err) {
+              console.error('Error loading cooperativa for SUPER_ADMIN:', err);
+              setCooperativa(null);
             }
-          } catch (err) {
-            console.error('Error loading cooperativa on init:', err);
-            setCooperativa(null);
           }
+          // ADMIN: cargar su cooperativa usando getAll (retorna solo su cooperativa)
+          else if (parsed.role === 'ADMIN' && parsed.cooperativaId) {
+            try {
+              const coopRes = await cooperativaService.getAll();
+              const cooperativas = coopRes.data.data || [];
+              const miCooperativa = cooperativas.find(c => 
+                (c.id === parsed.cooperativaId || c._id === parsed.cooperativaId)
+              );
+              setCooperativa(miCooperativa || null);
+            } catch (err) {
+              console.error('Error loading cooperativa for ADMIN:', err);
+              setCooperativa(null);
+            }
+          }
+          
         } catch (error) {
           console.error('Error parsing stored user:', error);
           localStorage.removeItem('user');
@@ -110,7 +129,15 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    applyColors(cooperativa?.config || null);
+    if (cooperativa?.config) {
+      applyColors(cooperativa.config);
+      
+      // Notificar cambio visual
+      toast.success('Tema actualizado', {
+        duration: 2000,
+        position: 'bottom-right',
+      });
+    }
   }, [cooperativa]);
 
   const login = async (credentials) => {
@@ -121,17 +148,24 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
-      // Cargar cooperativa asociada si existe
-      try {
-        if (userData.cooperativaId) {
-          const coopRes = await cooperativaService.getById(userData.cooperativaId);
-          setCooperativa(coopRes.data.data || null);
-        } else {
+      
+      // SUPER_ADMIN: debe seleccionar cooperativa después
+      if (userData.role === 'SUPER_ADMIN') {
+        setCooperativa(null);
+      }
+      // ADMIN: cargar su cooperativa
+      else if (userData.role === 'ADMIN' && userData.cooperativaId) {
+        try {
+          const coopRes = await cooperativaService.getAll();
+          const cooperativas = coopRes.data.data || [];
+          const miCooperativa = cooperativas.find(c => 
+            (c.id === userData.cooperativaId || c._id === userData.cooperativaId)
+          );
+          setCooperativa(miCooperativa || null);
+        } catch (err) {
+          console.error('Error loading cooperativa for ADMIN after login:', err);
           setCooperativa(null);
         }
-      } catch (err) {
-        console.error('Error loading cooperativa after login:', err);
-        setCooperativa(null);
       }
       
       toast.success('¡Bienvenido!');
@@ -150,17 +184,24 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(newUser));
       setUser(newUser);
-      // cargar cooperativa si aplica
-      try {
-        if (newUser.cooperativaId) {
-          const coopRes = await cooperativaService.getById(newUser.cooperativaId);
-          setCooperativa(coopRes.data.data || null);
-        } else {
+      
+      // SUPER_ADMIN: debe seleccionar cooperativa después
+      if (newUser.role === 'SUPER_ADMIN') {
+        setCooperativa(null);
+      }
+      // ADMIN: cargar su cooperativa
+      else if (newUser.role === 'ADMIN' && newUser.cooperativaId) {
+        try {
+          const coopRes = await cooperativaService.getAll();
+          const cooperativas = coopRes.data.data || [];
+          const miCooperativa = cooperativas.find(c => 
+            (c.id === newUser.cooperativaId || c._id === newUser.cooperativaId)
+          );
+          setCooperativa(miCooperativa || null);
+        } catch (err) {
+          console.error('Error loading cooperativa for ADMIN after register:', err);
           setCooperativa(null);
         }
-      } catch (err) {
-        console.error('Error loading cooperativa after register:', err);
-        setCooperativa(null);
       }
       
       toast.success('¡Cuenta creada exitosamente!');
@@ -168,6 +209,23 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       toast.error(error.response?.data?.message || 'Error al registrarse');
       throw error;
+    }
+  };
+
+  // Permite al SUPER_ADMIN seleccionar la cooperativa con la que "trabaja" actualmente
+  const selectCooperativa = async (coopOrId) => {
+    try {
+      let coopObj = coopOrId;
+      if (typeof coopOrId === 'string') {
+        const res = await cooperativaService.getById(coopOrId);
+        coopObj = res.data.data || null;
+      }
+      setCooperativa(coopObj);
+      try { localStorage.setItem('activeCooperativaId', coopObj?.id || coopObj?._id || ''); } catch (e) {}
+      return coopObj;
+    } catch (err) {
+      console.error('Error selecting cooperativa:', err);
+      return null;
     }
   };
 
@@ -180,11 +238,30 @@ export const AuthProvider = ({ children }) => {
   };
 
   const refreshCooperativa = async () => {
-    if (!user?.cooperativaId) return null;
     try {
-      const res = await cooperativaService.getById(user.cooperativaId);
-      setCooperativa(res.data.data || null);
-      return res.data.data || null;
+      // SUPER_ADMIN: refrescar la cooperativa activa seleccionada
+      if (user?.role === 'SUPER_ADMIN') {
+        const activeCoopId = localStorage.getItem('activeCooperativaId');
+        if (!activeCoopId) return null;
+        
+        const res = await cooperativaService.getById(activeCoopId);
+        const freshCoop = res.data.data || null;
+        setCooperativa(freshCoop);
+        return freshCoop;
+      }
+      
+      // ADMIN: refrescar su cooperativa usando getAll
+      if (user?.role === 'ADMIN' && user?.cooperativaId) {
+        const coopRes = await cooperativaService.getAll();
+        const cooperativas = coopRes.data.data || [];
+        const miCooperativa = cooperativas.find(c => 
+          (c.id === user.cooperativaId || c._id === user.cooperativaId)
+        );
+        setCooperativa(miCooperativa || null);
+        return miCooperativa || null;
+      }
+      
+      return null;
     } catch (err) {
       console.error('Error refreshing cooperativa:', err);
       return null;
@@ -203,6 +280,7 @@ export const AuthProvider = ({ children }) => {
     user,
     loading,
     cooperativa,
+    selectCooperativa,
     login,
     register,
     logout,

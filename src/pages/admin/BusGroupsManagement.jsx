@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { busGroupService } from '@/services';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 
 export default function BusGroupsManagement() {
   const [groups, setGroups] = useState([]);
@@ -17,16 +18,37 @@ export default function BusGroupsManagement() {
   const [editingGroup, setEditingGroup] = useState(null);
   const [formData, setFormData] = useState({ name: '', description: '' });
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (coopId || user?.cooperativaId) {
+      loadData();
+    }
+  }, [coopId]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await busGroupService.getAll();
-      const data = res.data?.data || res.data || [];
+      // Filtrar por cooperativaId
+      const params = {};
+      const targetCoop = coopId || user?.cooperativaId;
+      if (targetCoop) {
+        params.cooperativaId = targetCoop;
+      }
+      
+      const res = await busGroupService.getAll(params);
+      let data = res.data?.data || res.data || [];
+    
+      
+      // Filtrar en frontend por cooperativaId si el backend no lo hace
+      if (targetCoop && user?.role === 'SUPER_ADMIN') {
+        data = data.filter(group => {
+          const groupCoopId = group.cooperativaId || group.cooperativa?.id || group.cooperativa?._id;
+          return groupCoopId === targetCoop;
+        });
+        console.log('🔍 After frontend filter:', data.length, 'groups');
+      }
+      
       setGroups(data);
     } catch (error) {
       console.error('Error loading bus groups:', error);
@@ -43,10 +65,9 @@ export default function BusGroupsManagement() {
         name: formData.name,
         description: formData.description,
       };
-      // If admin, ensure cooperativaId is set
-      if (user?.role === 'ADMIN' && user?.cooperativaId) {
-        payload.cooperativaId = user.cooperativaId;
-      }
+      // Attach cooperativaId when available (admin or superadmin selected coop)
+      const targetCoop = coopId || user?.cooperativaId;
+      if (targetCoop) payload.cooperativaId = targetCoop;
 
       if (editingGroup) {
         await busGroupService.update(editingGroup.id, payload);
@@ -83,6 +104,19 @@ export default function BusGroupsManagement() {
       toast.error('No se pudo eliminar el grupo');
     }
   };
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Building2 className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar grupos de buses, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

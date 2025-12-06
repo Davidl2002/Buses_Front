@@ -19,6 +19,7 @@ const CooperativaDashboard = lazy(() => import('@/pages/admin/CooperativaDashboa
 const CooperativaSettings = lazy(() => import('@/pages/admin/CooperativaSettings'));
 const FrequenciesManagement = lazy(() => import('@/pages/admin/FrequenciesManagement'));
 const RouteSheet = lazy(() => import('@/pages/admin/RouteSheet'));
+const CooperativasManagement = lazy(() => import('@/pages/superadmin/CooperativasManagement'));
 
 // Loading component
 const LoadingSpinner = () => (
@@ -45,6 +46,7 @@ export default function AdminLayout() {
               <Route path="bus-groups" element={<BusGroupsManagement />} />
               <Route path="route-sheet" element={<RouteSheet />} />
               <Route path="frequencies" element={<FrequenciesManagement />} />
+              <Route path="cooperatives" element={<CooperativasManagement />} />
               <Route path="trips" element={<TripsManagement />} />
               <Route path="staff" element={<StaffManagement />} />
               <Route path="tickets" element={<TicketsManagement />} />

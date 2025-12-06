@@ -4,11 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLocation } from 'react-router-dom';
 import api from '@/services/api';
 import { Upload, Save, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function CooperativaSettings() {
-  const { user, refreshCooperativa } = useAuth();
+  const { user, refreshCooperativa, cooperativa: activeCooperativa } = useAuth();
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cooperativa, setCooperativa] = useState(null);
@@ -21,20 +24,32 @@ export default function CooperativaSettings() {
     email: '',
     phone: '',
     address: '',
-    facebook: '',
-    twitter: '',
-    instagram: '',
-    whatsapp: ''
   });
 
   useEffect(() => {
     loadCooperativa();
-  }, []);
+  }, [user, activeCooperativa, location.search]);
+
+  const resolveCooperativaId = () => {
+    let coopId = activeCooperativa?.id || activeCooperativa?._id || null;
+    if (!coopId) {
+      const params = new URLSearchParams(location.search);
+      coopId = params.get('cooperativaId') || null;
+    }
+    if (!coopId && user?.cooperativaId) coopId = user.cooperativaId;
+    if (!coopId) coopId = localStorage.getItem('activeCooperativaId') || null;
+    return coopId;
+  };
 
   const loadCooperativa = async () => {
     try {
       setLoading(true);
-      const response = await api.get(`/cooperativas/${user.cooperativaId}`);
+      const coopId = resolveCooperativaId();
+      if (!coopId) {
+        throw new Error('No se encontró cooperativa seleccionada');
+      }
+
+      const response = await api.get(`/cooperativas/${coopId}`);
       const coop = response.data.data;
 
       setCooperativa(coop);
@@ -42,16 +57,11 @@ export default function CooperativaSettings() {
       setFormData({
         name: coop.nombre || '',
         email: coop.email || '',
-        // support both shapes and both languages: top-level phone/telefono or contacto.{telefono,direccion}
         phone: coop.phone || coop.telefono || coop.contacto?.telefono || '',
         address: coop.address || coop.direccion || coop.contacto?.direccion || '',
         logo: coop.config?.logo || '',
         primaryColor: coop.config?.primaryColor || '#1a56db',
         secondaryColor: coop.config?.secondaryColor || '#0e7490',
-        facebook: coop.config?.facebook || '',
-        twitter: coop.config?.twitter || '',
-        instagram: coop.config?.instagram || '',
-        whatsapp: coop.config?.whatsapp || ''
       });
 
       if (coop.config?.logo) {
@@ -59,7 +69,7 @@ export default function CooperativaSettings() {
       }
     } catch (error) {
       console.error('Error al cargar cooperativa:', error);
-      alert('Error al cargar la configuración');
+      toast.error(error.response?.data?.message || error.message || 'Error al cargar la configuración');
     } finally {
       setLoading(false);
     }
@@ -72,8 +82,8 @@ export default function CooperativaSettings() {
 
   const uploadFile = (file) => {
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert('El logo no debe superar los 2MB');
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('El logo no debe superar los 10MB');
       return;
     }
 
@@ -102,9 +112,7 @@ export default function CooperativaSettings() {
       }
 
       const merged = {
-        // keep top-level fields from existing cooperativa
         ...cooperativa,
-        // apply editable top-level changes
         nombre: formData.name || cooperativa.nombre,
         email: cooperativa.email || formData.email || undefined,
 
@@ -113,31 +121,23 @@ export default function CooperativaSettings() {
           telefono: formData.phone || cooperativa.contacto?.telefono || cooperativa.telefono,
           direccion: formData.address || cooperativa.contacto?.direccion || cooperativa.direccion
         },
-        // also set top-level telefono/direccion and english keys so update works for APIs expecting either
         telefono: formData.phone || cooperativa.telefono,
         direccion: formData.address || cooperativa.direccion,
         phone: formData.phone || cooperativa.phone || cooperativa.telefono,
         address: formData.address || cooperativa.address || cooperativa.direccion,
-        // merge config fully so we don't accidentally remove keys
+
         config: {
           ...(cooperativa.config || {}),
           logo: formData.logo || cooperativa.config?.logo,
           primaryColor: formData.primaryColor || cooperativa.config?.primaryColor,
           secondaryColor: formData.secondaryColor || cooperativa.config?.secondaryColor,
-          facebook: formData.facebook !== undefined ? formData.facebook : cooperativa.config?.facebook,
-          twitter: formData.twitter !== undefined ? formData.twitter : cooperativa.config?.twitter,
-          instagram: formData.instagram !== undefined ? formData.instagram : cooperativa.config?.instagram,
-          whatsapp: formData.whatsapp !== undefined ? formData.whatsapp : cooperativa.config?.whatsapp
         }
       };
 
-      // Optionally remove fields that should not be sent (like audit fields)
-      // Build final payload with only allowed fields for update
       const payload = {
         nombre: merged.nombre,
         email: merged.email,
         contacto: merged.contacto,
-        // include both english and spanish top-level keys to match backend expectations
         phone: merged.phone,
         address: merged.address,
         telefono: merged.telefono,
@@ -145,17 +145,23 @@ export default function CooperativaSettings() {
         config: merged.config
       };
 
-      await api.put(`/cooperativas/${user.cooperativaId}`, payload);
+      const coopId = resolveCooperativaId();
+      if (!coopId) throw new Error('No se encontró cooperativa seleccionada');
+      await api.put(`/cooperativas/${coopId}`, payload);
       
-      alert('Configuración actualizada exitosamente');
-      // refrescar cooperativa en el contexto global
+      // refrescar cooperativa en el contexto global para aplicar cambios inmediatamente
       if (typeof refreshCooperativa === 'function') {
         await refreshCooperativa();
       }
+      
+      toast.success('Configuración actualizada exitosamente. Los cambios se aplicarán en toda la plataforma.', {
+        duration: 4000,
+      });
+      
       loadCooperativa();
     } catch (error) {
       console.error('Error al guardar configuración:', error);
-      alert('Error al guardar la configuración');
+      toast.error(error.response?.data?.message || error.message || 'Error al guardar la configuración');
     } finally {
       setSaving(false);
     }
@@ -273,7 +279,7 @@ export default function CooperativaSettings() {
                     <Upload className="w-4 h-4 text-gray-500" />
                     Arrastra o sube
                   </label>
-                  <div className="text-xs text-gray-500 mt-2">PNG o JPG (máx. 2MB). Recomendado 400x400px</div>
+                  <div className="text-xs text-gray-500 mt-2">PNG o JPG (máx. 10MB). Recomendado 400x400px</div>
                 </div>
               </div>
             </div>
@@ -331,62 +337,7 @@ export default function CooperativaSettings() {
           </CardContent>
         </Card>
 
-        {/* Redes Sociales */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Redes Sociales</CardTitle>
-            <CardDescription>
-              Enlaces a las redes sociales de tu cooperativa
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="facebook">Facebook</Label>
-                <Input
-                  id="facebook"
-                  type="url"
-                  value={formData.facebook}
-                  onChange={(e) => setFormData({ ...formData, facebook: e.target.value })}
-                  placeholder="https://facebook.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="instagram">Instagram</Label>
-                <Input
-                  id="instagram"
-                  type="url"
-                  value={formData.instagram}
-                  onChange={(e) => setFormData({ ...formData, instagram: e.target.value })}
-                  placeholder="https://instagram.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="twitter">Twitter / X</Label>
-                <Input
-                  id="twitter"
-                  type="url"
-                  value={formData.twitter}
-                  onChange={(e) => setFormData({ ...formData, twitter: e.target.value })}
-                  placeholder="https://twitter.com/tu-cooperativa"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="whatsapp">WhatsApp</Label>
-                <Input
-                  id="whatsapp"
-                  type="tel"
-                  value={formData.whatsapp}
-                  onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
-                  placeholder="+593 99 999 9999"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Redes Sociales removidas en configuración */}
 
         {/* Botón Guardar */}
         <div className="flex justify-end">

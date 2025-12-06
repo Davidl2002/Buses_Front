@@ -47,21 +47,62 @@ export default function TripSearch({ onSelectTrip }) {
 
   const loadOriginCities = async () => {
     try {
-      // intentar cargar desde sessionStorage
+      // intentar cargar desde sessionStorage (ignorar arrays vacíos o contenido inválido)
       const cached = sessionStorage.getItem('originCities');
       if (cached) {
-        setOriginCities(JSON.parse(cached));
-        return;
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setOriginCities(parsed);
+            return;
+          }
+        } catch (e) {
+          console.warn('Cached originCities inválido, se ignorará', e);
+        }
       }
-      const response = await tripService.getOriginCities();
-      let data = response.data.data || [];
+      let response;
+      try {
+        response = await tripService.getOriginCities();
+      } catch (err) {
+        console.warn('getOriginCities failed, will fallback to extracting from trips', err);
+        response = null;
+      }
+      let data = response?.data?.data || [];
+      // If API returned nothing, fallback to deriving origins from all trips
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        try {
+          const allRes = await tripService.getAll();
+          const allTrips = allRes.data?.data || allRes.data || [];
+          const originsSet = new Set();
+          const now = new Date();
+          (allTrips || []).forEach(t => {
+            try {
+              const dateStr = t.date || t.frequency?.date || t.startDate || t.dateOfTravel || null;
+              const tripDate = dateStr ? new Date(dateStr) : null;
+              // only future or today
+              if (tripDate && tripDate >= new Date(now.setHours(0,0,0,0))) {
+                const origin = (t.origin || t.route?.origin || t.from || t.departureCity || t.startCity || '').toString().trim();
+                if (origin) originsSet.add(origin);
+              }
+            } catch (e) {}
+          });
+          data = Array.from(originsSet);
+        } catch (err) {
+          console.warn('Fallback extracting origins failed', err);
+          data = [];
+        }
+      }
       // Normalizar a objetos { id, name }
       const normalized = (data || []).map(d => {
         if (typeof d === 'string') return { id: d, name: d };
         return { id: d.id || d._id || d.name || JSON.stringify(d), name: d.name || d.label || d.city || String(d) };
       });
       setOriginCities(normalized || []);
-      try { sessionStorage.setItem('originCities', JSON.stringify(normalized || [])); } catch (e) {}
+      try {
+        if (Array.isArray(normalized) && normalized.length > 0) {
+          sessionStorage.setItem('originCities', JSON.stringify(normalized));
+        }
+      } catch (e) {}
     } catch (error) {
       console.error('Error loading origin cities:', error);
       setOriginCities([]);
@@ -73,10 +114,17 @@ export default function TripSearch({ onSelectTrip }) {
       const cacheKey = `destinationCities_${origin}`;
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
-        setDestinationCities(JSON.parse(cached));
-        return;
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setDestinationCities(parsed);
+            return;
+          }
+        } catch (e) {
+          console.warn(`Cached ${cacheKey} inválido, se ignorará`, e);
+        }
       }
-
+      // Use the public destinations endpoint for the selected origin
       const response = await tripService.getDestinationCities(origin);
       let apiDestinations = response.data.data || [];
       // normalize to objects
@@ -86,34 +134,52 @@ export default function TripSearch({ onSelectTrip }) {
       try {
         const allRes = await tripService.getAll();
         const allTrips = allRes.data?.data || allRes.data || [];
-        const stops = new Set(apiDestinations.map(d => String(d)));
-        allTrips.forEach(t => {
+        // Filtrar solo trips cuyo origen coincida con el origen seleccionado
+        const relevantTrips = (allTrips || []).filter(t => {
+          const tripOrigin = (t.origin || t.route?.origin || t.from || t.departureCity || t.startCity || '').toString().trim();
+          return tripOrigin && tripOrigin.toLowerCase() === String(origin).toLowerCase();
+        });
+
+        // start with an empty set and only add stops from trips that match the origin
+        const stops = new Set();
+        relevantTrips.forEach(t => {
           try {
             const routeStops = t.route?.stops || t.stops || t.route?.paradas || [];
             if (Array.isArray(routeStops)) {
               routeStops.forEach(s => {
-                if (s && String(s).trim().length > 0 && String(s).toLowerCase() !== String(origin).toLowerCase()) {
-                  stops.add(String(s));
+                const stopName = s && (s.name || s.city || s) ;
+                if (stopName && String(stopName).trim().length > 0 && String(stopName).toLowerCase() !== String(origin).toLowerCase()) {
+                  stops.add(String(stopName));
                 }
               });
             }
             const dest = t.route?.destination || t.destination;
-            if (dest && String(dest).trim().length > 0 && String(dest).toLowerCase() !== String(origin).toLowerCase()) {
-              stops.add(String(dest));
+            const destName = dest && (dest.name || dest.city || dest);
+            if (destName && String(destName).trim().length > 0 && String(destName).toLowerCase() !== String(origin).toLowerCase()) {
+              stops.add(String(destName));
             }
           } catch (e) {}
         });
-
-        const final = Array.from(stops).map(s => ({ id: s, name: s }));
+        let final = [];
+        if (stops.size > 0) {
+          final = Array.from(stops).map(s => ({ id: s, name: s }));
+        } else {
+          // fallback to the API-provided list if we couldn't infer from trips
+          final = apiDestinations || [];
+        }
         setDestinationCities(final);
-        try { sessionStorage.setItem(cacheKey, JSON.stringify(final)); } catch (e) {}
+        try {
+          if (Array.isArray(final) && final.length > 0) sessionStorage.setItem(cacheKey, JSON.stringify(final));
+        } catch (e) {}
         return;
       } catch (err) {
         // si falla el fallback, usar lo que devolvió el endpoint
       }
 
       setDestinationCities(apiDestinations || []);
-      try { sessionStorage.setItem(cacheKey, JSON.stringify(apiDestinations || [])); } catch (e) {}
+      try {
+        if (Array.isArray(apiDestinations) && apiDestinations.length > 0) sessionStorage.setItem(cacheKey, JSON.stringify(apiDestinations));
+      } catch (e) {}
     } catch (error) {
       setDestinationCities([]);
     }

@@ -206,4 +206,3 @@ Este proyecto es parte de un sistema académico.
 
 ---
 
-Desarrollado con ❤️ usando React + Vite + Tailwind CSS

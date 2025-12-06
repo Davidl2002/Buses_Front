@@ -10,9 +10,11 @@ import { Loader2, Plus, Edit, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { cityService } from '@/services';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 
 export default function CitiesManagement() {
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
   const [cities, setCities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -21,13 +23,17 @@ export default function CitiesManagement() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    loadCities();
-  }, []);
+    if (coopId || user?.cooperativaId) {
+      loadCities();
+    }
+  }, [coopId]);
 
   const loadCities = async () => {
     try {
       setLoading(true);
-      const res = await cityService.getAll();
+      const params = {};
+      if (coopId) params.cooperativaId = coopId;
+      const res = await cityService.getAll(params);
       const data = res.data?.data || res.data || [];
       setCities(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -89,6 +95,19 @@ export default function CitiesManagement() {
     const v = (typeof c === 'string') ? c : (c.name || c.cityName || c.label || '');
     return String(v).toLowerCase().includes(q) || String(c.state || '').toLowerCase().includes(q);
   });
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Plus className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar ciudades, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
