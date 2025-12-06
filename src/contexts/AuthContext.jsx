@@ -232,6 +232,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    localStorage.removeItem('activeCooperativaId');
     setUser(null);
     setCooperativa(null);
     toast.success('Sesión cerrada');

@@ -42,7 +42,7 @@ const navigationAdmin = [
     name: 'Configuración',
     href: '/admin/cooperativa-settings',
     icon: Palette,
-    roles: ['ADMIN']
+    roles: ['ADMIN', 'SUPER_ADMIN']
   },
   {
     name: 'Rutas',
@@ -126,6 +126,16 @@ export default function AdminSidebar() {
       }
     };
     load();
+
+    // Escuchar evento personalizado para recargar cooperativas
+    const handleCooperativaCreated = () => {
+      load();
+    };
+    window.addEventListener('cooperativaCreated', handleCooperativaCreated);
+
+    return () => {
+      window.removeEventListener('cooperativaCreated', handleCooperativaCreated);
+    };
   }, [user]);
 
   // Filtrar navegación según el rol del usuario

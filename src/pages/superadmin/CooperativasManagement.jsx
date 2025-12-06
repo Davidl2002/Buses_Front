@@ -229,6 +229,9 @@ export default function CooperativasManagement() {
         // POST /api/cooperativas
         await cooperativaService.create(payload);
         toast.success('Cooperativa creada exitosamente');
+        
+        // Emitir evento para que el sidebar se actualice
+        window.dispatchEvent(new Event('cooperativaCreated'));
       }
       
       resetForm();

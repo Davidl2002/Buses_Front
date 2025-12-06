@@ -14,7 +14,7 @@ export const tripService = {
   search: (params) => api.get('/trips/search', { params }),
   getOriginCities: () => api.get('/trips/cities/origins'),
   getDestinationCities: (origin) => api.get('/trips/cities/destinations', { params: { origin } }),
-  getAvailableDates: (origin, destination) => api.get('/trips/dates/available', { params: { origin, destination } }),
+  getAvailableDates: (origin, destination) => api.get('/trips/available-dates', { params: { origin, destination } }),
   getAll: () => api.get('/trips'),
   getById: (id) => api.get(`/trips/${id}`),
   // Public endpoint to fetch trip details without authentication

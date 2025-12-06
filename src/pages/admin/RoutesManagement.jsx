@@ -263,10 +263,7 @@ export default function RoutesManagement() {
         toast.error('Debe seleccionar al menos un día de operación para la frecuencia');
         return;
       }
-      if (!routeFormData.busGroupId) {
-        toast.error('Debe seleccionar un Grupo de Buses para la frecuencia');
-        return;
-      }
+      // busGroupId es opcional, se puede enviar null
     }
 
     try {
@@ -424,15 +421,9 @@ export default function RoutesManagement() {
         cooperativaId: frequencyFormData.cooperativaId || coopId || user.cooperativaId
       };
 
-      // Make bus group required
-      if (!frequencyData.busGroupId) {
-        toast.error('Debe seleccionar un Grupo de Buses (obligatorio)');
-        return;
-      }
-
-      // If busGroupId is 'none' or empty, remove it so backend treats as unassigned
+      // Si busGroupId está vacío o es 'none', enviarlo como null (opcional)
       if (!frequencyData.busGroupId || frequencyData.busGroupId === 'none') {
-        delete frequencyData.busGroupId;
+        frequencyData.busGroupId = null;
       }
 
       if (editingFrequency) {
@@ -1072,15 +1063,16 @@ export default function RoutesManagement() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="busGroupId">Grupo de Buses</Label>
+                    <Label htmlFor="busGroupId">Grupo de Buses (Opcional)</Label>
                     <Select 
-                      value={routeFormData.busGroupId || ''} 
-                      onValueChange={(value) => setRouteFormData({...routeFormData, busGroupId: value})}
+                      value={routeFormData.busGroupId || 'none'} 
+                      onValueChange={(value) => setRouteFormData({...routeFormData, busGroupId: value === 'none' ? '' : value})}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar grupo" />
+                        <SelectValue placeholder="Sin asignar" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="none">Sin asignar</SelectItem>
                         {busGroups.map((group) => (
                           <SelectItem key={group.id} value={group.id}>
                             {group.name}
@@ -1231,15 +1223,16 @@ export default function RoutesManagement() {
                 />
               </div>
               <div>
-                <Label htmlFor="frequencyBusGroup">Grupo de Buses *</Label>
+                <Label htmlFor="frequencyBusGroup">Grupo de Buses (Opcional)</Label>
                 <Select 
-                  value={frequencyFormData.busGroupId} 
-                  onValueChange={(value) => setFrequencyFormData({...frequencyFormData, busGroupId: value})}
+                  value={frequencyFormData.busGroupId || 'none'} 
+                  onValueChange={(value) => setFrequencyFormData({...frequencyFormData, busGroupId: value === 'none' ? '' : value})}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar grupo (obligatorio)" />
+                    <SelectValue placeholder="Sin asignar" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="none">Sin asignar</SelectItem>
                     {busGroups.map((group) => (
                       <SelectItem key={group.id} value={group.id}>
                         {group.name}
