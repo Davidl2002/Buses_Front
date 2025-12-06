@@ -151,6 +151,30 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         type: s.type || s.seatType || null
       }));
 
+      // **DETECCIÓN AUTOMÁTICA DE DOS PISOS**
+      if (seats.length > 0 && !seats.some(s => s.floor === 1)) {
+        const positionMap = new Map();
+        seats.forEach(seat => {
+          const key = `${seat.row}-${seat.col}`;
+          if (!positionMap.has(key)) {
+            positionMap.set(key, []);
+          }
+          positionMap.get(key).push(seat);
+        });
+        
+        const hasDuplicates = Array.from(positionMap.values()).some(seatList => seatList.length > 1);
+        
+        if (hasDuplicates) {
+          const floorAssigned = new Map();
+          seats = seats.map(seat => {
+            const key = `${seat.row}-${seat.col}`;
+            const currentCount = floorAssigned.get(key) || 0;
+            floorAssigned.set(key, currentCount + 1);
+            return { ...seat, floor: currentCount };
+          });
+        }
+      }
+
       // If seat numbers/types present but no row/col, try to infer positions using rows/columns
       const missingPosition = seats.some(s => s.row === undefined || s.row === null || s.col === undefined || s.col === null);
       if ((rows > 0 && columns > 0) && missingPosition) {
@@ -234,6 +258,31 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
             floor: s.floor ?? 0,
             type: s.type || s.seatType || null
           }));
+          
+          // **DETECCIÓN AUTOMÁTICA DE DOS PISOS en fetchedLayout**
+          if (fetchedSeats.length > 0 && !fetchedSeats.some(s => s.floor === 1)) {
+            const positionMap = new Map();
+            fetchedSeats.forEach(seat => {
+              const key = `${seat.row}-${seat.col}`;
+              if (!positionMap.has(key)) {
+                positionMap.set(key, []);
+              }
+              positionMap.get(key).push(seat);
+            });
+            
+            const hasDuplicates = Array.from(positionMap.values()).some(seatList => seatList.length > 1);
+            
+            if (hasDuplicates) {
+              const floorAssigned = new Map();
+              fetchedSeats = fetchedSeats.map(seat => {
+                const key = `${seat.row}-${seat.col}`;
+                const currentCount = floorAssigned.get(key) || 0;
+                floorAssigned.set(key, currentCount + 1);
+                return { ...seat, floor: currentCount };
+              });
+            }
+          }
+          
           // aplicar normalización de tipos
           const maxRow = fRows && fRows > 0 ? fRows : (fetchedSeats.length ? (Math.max(...fetchedSeats.map(x => x.row || 0)) + 1) : 0);
           fetchedSeats = fetchedSeats.map(s => ({ ...s, type: s.type ? s.type : (s.row === 0 ? 'VIP' : (s.row >= maxRow - 1 ? 'SEMI_CAMA' : 'NORMAL')), isOccupied: occupiedSet.has(String(s.number)) }));
@@ -691,59 +740,168 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="max-w-md mx-auto">
-              {/* Indicador del frente del bus */}
-              <div className="text-center mb-4 text-sm text-muted-foreground">
-                🚗 Frente del bus
-              </div>
-              
-              {/* Mapa de asientos (estilo admin: 5 columnas físicas con pasillo central) */}
-              <div className="flex justify-center">
-                <div className="bg-gray-100 rounded-lg p-4 inline-block">
-                  <div className="mb-4 text-center">
-                    <div className="inline-block bg-gray-800 text-white px-6 py-2 rounded-t-lg font-semibold">
-                      🚗 Frente del bus
-                    </div>
-                  </div>
+            <div className="max-w-4xl mx-auto">
+              {/* Detectar si es bus de dos pisos */}
+              {(() => {
+                const hasTwoFloors = seatMap.seats.some(s => s.floor === 1);
+                const floor0Seats = seatMap.seats.filter(s => s.floor === 0);
+                const floor1Seats = seatMap.seats.filter(s => s.floor === 1);
+                const maxRowFloor0 = floor0Seats.length > 0 ? Math.max(...floor0Seats.map(s => s.row || 0)) + 1 : seatMap.rows;
+                const maxRowFloor1 = floor1Seats.length > 0 ? Math.max(...floor1Seats.map(s => s.row || 0)) + 1 : 0;
 
-                  <div className="space-y-2">
-                    {Array.from({ length: seatMap.rows }).map((_, row) => (
-                      <div key={row} className="flex gap-2 items-center justify-center">
-                        <span className="text-xs text-gray-500 w-4">{row + 1}</span>
-                        {Array.from({ length: seatMap.columns }).map((__, col) => (
-                          <div key={col}>
-                            {col === 2 ? (
-                              <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
-                            ) : (
-                              (() => {
-                                const seat = seatMap.seats.find(s => s.row === row && s.col === col);
-                                if (!seat) return <div className="w-12 h-12" />;
-                                const isSelected = selectedSeat?.number === seat.number;
-                                return (
-                                  <button
-                                    key={seat.number}
-                                    onClick={() => handleSeatSelect(seat)}
-                                    disabled={seat.isOccupied || loading}
-                                    className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
-                                    title={`Asiento ${seat.number}`}
-                                  >
-                                    {getSeatIcon(seat, isSelected)}
-                                    <span className="text-[10px] mt-1">{seat.number}</span>
-                                  </button>
-                                );
-                              })()
-                            )}
+                if (hasTwoFloors) {
+                  // Bus de dos pisos - mostrar ambos pisos
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Piso 1 */}
+                      <div className="flex justify-center">
+                        <div className="bg-blue-50 rounded-lg p-4 inline-block border-2 border-blue-300">
+                          <div className="mb-4 text-center">
+                            <div className="inline-block bg-blue-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                              🚗 Piso 1
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {Array.from({ length: maxRowFloor0 }).map((_, row) => (
+                              <div key={row} className="flex gap-2 items-center justify-center">
+                                <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                                {Array.from({ length: seatMap.columns }).map((__, col) => (
+                                  <div key={col}>
+                                    {col === 2 ? (
+                                      <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                    ) : (
+                                      (() => {
+                                        const seat = floor0Seats.find(s => s.row === row && s.col === col);
+                                        if (!seat) return <div className="w-12 h-12" />;
+                                        const isSelected = selectedSeat?.number === seat.number;
+                                        return (
+                                          <button
+                                            key={seat.number}
+                                            onClick={() => handleSeatSelect(seat)}
+                                            disabled={seat.isOccupied || loading}
+                                            className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                            title={`Asiento ${seat.number}`}
+                                          >
+                                            {getSeatIcon(seat, isSelected)}
+                                            <span className="text-[10px] mt-1">{seat.number}</span>
+                                          </button>
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-4 text-center">
+                            <div className="inline-block bg-blue-300 px-6 py-2 rounded-b-lg text-xs text-blue-900">Puerta trasera</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Piso 2 */}
+                      <div className="flex justify-center">
+                        <div className="bg-purple-50 rounded-lg p-4 inline-block border-2 border-purple-300">
+                          <div className="mb-4 text-center">
+                            <div className="inline-block bg-purple-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                              🚗 Piso 2
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {Array.from({ length: maxRowFloor1 }).map((_, row) => (
+                              <div key={row} className="flex gap-2 items-center justify-center">
+                                <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                                {Array.from({ length: seatMap.columns }).map((__, col) => (
+                                  <div key={col}>
+                                    {col === 2 ? (
+                                      <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                    ) : (
+                                      (() => {
+                                        const seat = floor1Seats.find(s => s.row === row && s.col === col);
+                                        if (!seat) return <div className="w-12 h-12" />;
+                                        const isSelected = selectedSeat?.number === seat.number;
+                                        return (
+                                          <button
+                                            key={seat.number}
+                                            onClick={() => handleSeatSelect(seat)}
+                                            disabled={seat.isOccupied || loading}
+                                            className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                            title={`Asiento ${seat.number}`}
+                                          >
+                                            {getSeatIcon(seat, isSelected)}
+                                            <span className="text-[10px] mt-1">{seat.number}</span>
+                                          </button>
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-4 text-center">
+                            <div className="inline-block bg-purple-300 px-6 py-2 rounded-b-lg text-xs text-purple-900">Puerta trasera</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Bus de un solo piso
+                return (
+                  <div className="flex justify-center">
+                    <div className="bg-gray-100 rounded-lg p-4 inline-block">
+                      <div className="mb-4 text-center">
+                        <div className="inline-block bg-gray-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                          🚗 Frente del bus
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {Array.from({ length: seatMap.rows }).map((_, row) => (
+                          <div key={row} className="flex gap-2 items-center justify-center">
+                            <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                            {Array.from({ length: seatMap.columns }).map((__, col) => (
+                              <div key={col}>
+                                {col === 2 ? (
+                                  <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                ) : (
+                                  (() => {
+                                    const seat = seatMap.seats.find(s => s.row === row && s.col === col);
+                                    if (!seat) return <div className="w-12 h-12" />;
+                                    const isSelected = selectedSeat?.number === seat.number;
+                                    return (
+                                      <button
+                                        key={seat.number}
+                                        onClick={() => handleSeatSelect(seat)}
+                                        disabled={seat.isOccupied || loading}
+                                        className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                        title={`Asiento ${seat.number}`}
+                                      >
+                                        {getSeatIcon(seat, isSelected)}
+                                        <span className="text-[10px] mt-1">{seat.number}</span>
+                                      </button>
+                                    );
+                                  })()
+                                )}
+                              </div>
+                            ))}
                           </div>
                         ))}
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="mt-4 text-center">
-                    <div className="inline-block bg-gray-300 px-6 py-2 rounded-b-lg text-xs text-gray-600">Puerta trasera</div>
+                      <div className="mt-4 text-center">
+                        <div className="inline-block bg-gray-300 px-6 py-2 rounded-b-lg text-xs text-gray-600">Puerta trasera</div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>

@@ -23,8 +23,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { tripManagementService as tripService, routeService, busService, driverService, frequencyService } from '@/services';
+import { tripManagementService as tripService, routeService, busService, driverService, staffService, frequencyService, cooperativaService, enhancedTicketService as ticketService } from '@/services';
 import toast from 'react-hot-toast';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function TripsManagement() {
   const [trips, setTrips] = useState([]);
@@ -32,11 +34,14 @@ export default function TripsManagement() {
   const [frequencies, setFrequencies] = useState([]);
   const [buses, setBuses] = useState([]);
   const [drivers, setDrivers] = useState([]);
+  const [assistants, setAssistants] = useState([]);
+  const [cooperativas, setCooperativas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingTrip, setEditingTrip] = useState(null);
   
   const [formData, setFormData] = useState({
+    cooperativaId: '',
     routeId: '',
     busId: '',
     driverId: '',
@@ -46,19 +51,36 @@ export default function TripsManagement() {
     price: '',
     status: 'SCHEDULED'
   });
+  const coopId = useActiveCooperativaId();
+  const { user } = useAuth();
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (coopId || user?.cooperativaId) {
+      loadData();
+    }
+  }, [coopId]);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      
+      // Cargar cooperativas si es SUPER_ADMIN
+      if (user?.role === 'SUPER_ADMIN') {
+        try {
+          const coopRes = await cooperativaService.getAll();
+          const coopData = coopRes.data?.data || coopRes.data || [];
+          setCooperativas(Array.isArray(coopData) ? coopData : []);
+        } catch (err) {
+          console.warn('No se pudieron cargar cooperativas', err);
+        }
+      }
+      
       await Promise.all([
         loadFrequencies(),
         loadRoutes(),
         loadBuses(),
         loadDrivers(),
+        loadAssistants(),
         loadTrips()
       ]);
     } catch (error) {
@@ -70,12 +92,50 @@ export default function TripsManagement() {
 
   const loadTrips = async () => {
     try {
-      const response = await tripService.getAll();
+      const params = {};
+      if (coopId) params.cooperativaId = coopId;
+      const response = await tripService.getAll(params);
       console.log('Trips API response:', response.data);
       
       if (response.data.success && response.data.data) {
+        let tripsData = response.data.data;
+        
+        // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+        if (user?.role === 'SUPER_ADMIN' && coopId) {
+          console.log('🔍 TripsManagement - Filtrando viajes para cooperativa:', coopId);
+          tripsData = tripsData.filter(t => {
+            const tripCoopId = t.cooperativaId || t.cooperativa?._id || t.cooperativa?.id;
+            return tripCoopId === coopId;
+          });
+          console.log('Viajes filtrados:', tripsData.length, 'registros');
+        }
+        
+        // Cargar todos los tickets para calcular ocupación real
+        let ticketsData = [];
+        try {
+          const ticketsResponse = await ticketService.getAll();
+          ticketsData = ticketsResponse.data?.data || [];
+          console.log('Tickets cargados para calcular ocupación:', ticketsData.length);
+        } catch (err) {
+          console.warn('Error cargando tickets para ocupación:', err);
+        }
+        
+        // Crear un mapa de tripId -> cantidad de tickets activos
+        const occupancyMap = {};
+        ticketsData.forEach(ticket => {
+          const tripId = ticket.tripId || ticket.trip?.id || ticket.trip?._id;
+          // Solo contar tickets activos (no cancelados ni expirados)
+          if (tripId && ticket.status && !['CANCELLED', 'EXPIRED'].includes(ticket.status)) {
+            occupancyMap[tripId] = (occupancyMap[tripId] || 0) + 1;
+          }
+        });
+        
+        console.log('Mapa de ocupación calculado:', occupancyMap);
+        
         // Transformar datos del backend al formato esperado por el frontend
-        const transformedTrips = response.data.data.map(trip => {
+        const transformedTrips = tripsData.map(trip => {
+          const tripId = trip.id || trip._id;
+          
           // normalize route info
           const routeObj = trip.route || trip.frequency?.route || {};
           const route = {
@@ -134,6 +194,9 @@ export default function TripsManagement() {
             }
           }
 
+          // Calcular ocupación real desde los tickets
+          const occupiedSeats = occupancyMap[tripId] || 0;
+
           return {
             id: trip.id,
             frequencyId: trip.frequency?.id != null ? String(trip.frequency.id) : (trip.frequencyId != null ? String(trip.frequencyId) : null),
@@ -147,7 +210,7 @@ export default function TripsManagement() {
             busId: trip.bus?.id != null ? String(trip.bus.id) : (trip.busId != null ? String(trip.busId) : null),
             driver: driver || (trip.driverId ? { id: String(trip.driverId) } : null),
             assistant: assistant || (trip.assistantId ? { id: String(trip.assistantId) } : null),
-            occupiedSeats: trip.occupiedSeats || 0,
+            occupiedSeats, // Usar la ocupación calculada desde tickets
             cooperativaId: trip.cooperativaId
           };
         });
@@ -223,7 +286,9 @@ export default function TripsManagement() {
 
   const loadRoutes = async () => {
     try {
-      const response = await routeService.getAll();
+      const params = {};
+      if (coopId) params.cooperativaId = coopId;
+      const response = await routeService.getAll(params);
       setRoutes(response.data.data || []);
     } catch (error) {
       console.error('Error loading routes:', error);
@@ -234,20 +299,50 @@ export default function TripsManagement() {
     }
   };
 
-  const loadFrequencies = async () => {
+  const loadFrequencies = async (specificCoopId = null) => {
     try {
-      const response = await frequencyService.getAll();
-      setFrequencies(response.data.data || []);
+      const params = {};
+      const cooperativaId = specificCoopId || coopId || user?.cooperativaId;
+      if (cooperativaId) params.cooperativaId = cooperativaId;
+      const response = await frequencyService.getAll(params);
+      let frequenciesData = response.data.data || [];
+      
+      
+      // Filtrado adicional en frontend si es necesario
+      if (cooperativaId) {
+        frequenciesData = frequenciesData.filter(freq => {
+          const freqCoopId = freq.cooperativaId || freq.cooperativa?._id || freq.cooperativa?.id;
+          return freqCoopId === cooperativaId;
+        });
+        console.log('✅ Frecuencias después de filtrar:', frequenciesData.length);
+      }
+      
+      setFrequencies(frequenciesData);
     } catch (error) {
       console.error('Error loading frequencies:', error);
       setFrequencies([]);
     }
   };
 
-  const loadBuses = async () => {
+  const loadBuses = async (specificCoopId = null) => {
     try {
-      const response = await busService.getAll();
-      setBuses(response.data.data?.filter(bus => bus.status === 'ACTIVE') || []);
+      const params = {};
+      const cooperativaId = specificCoopId || coopId || user?.cooperativaId;
+      if (cooperativaId) params.cooperativaId = cooperativaId;
+      const response = await busService.getAll(params);
+      let busesData = response.data.data?.filter(bus => bus.status === 'ACTIVE') || [];
+      
+      // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+      if (user?.role === 'SUPER_ADMIN' && coopId) {
+        console.log('🔍 TripsManagement - Filtrando buses para cooperativa:', coopId);
+        busesData = busesData.filter(b => {
+          const busCoopId = b.cooperativaId || b.cooperativa?._id || b.cooperativa?.id;
+          return busCoopId === coopId;
+        });
+        console.log('✅ Buses filtrados:', busesData.length, 'registros');
+      }
+      
+      setBuses(busesData);
     } catch (error) {
       console.error('Error loading buses:', error);
       setBuses([
@@ -257,27 +352,71 @@ export default function TripsManagement() {
     }
   };
 
-  const loadDrivers = async () => {
+  const loadDrivers = async (specificCoopId = null) => {
     try {
-      const response = await driverService.getAll();
+      const params = { role: 'CHOFER' };
+      const cooperativaId = specificCoopId || coopId || user?.cooperativaId;
+      if (cooperativaId) params.cooperativaId = cooperativaId;
+      
+      const response = await staffService.getAll(params);
       const raw = response.data?.data ?? response.data ?? [];
+      
       // normalize and be liberal with status field names
-      const normalized = (Array.isArray(raw) ? raw : []).filter(d => d).map(d => ({
+      let normalized = (Array.isArray(raw) ? raw : []).filter(d => d).map(d => ({
         id: d.id != null ? String(d.id) : null,
         name: d.name || (d.firstName ? `${d.firstName} ${d.lastName || ''}`.trim() : undefined) || d.fullName || d.driverName || null,
         license: d.license || d.licencia || null,
-        status: d.status || d.state || (d.active === true ? 'ACTIVE' : d.active === false ? 'INACTIVE' : null)
+        status: d.status || d.state || (d.active === true ? 'ACTIVE' : d.active === false ? 'INACTIVE' : null),
+        cooperativaId: d.cooperativaId || d.cooperativa?._id || d.cooperativa?.id
       }));
+      
+      // Filtrado adicional en frontend si es necesario
+      if (cooperativaId) {
+        normalized = normalized.filter(d => {
+          console.log('  - Conductor:', d.name, 'cooperativaId:', d.cooperativaId, 'match:', d.cooperativaId === cooperativaId);
+          return d.cooperativaId === cooperativaId;
+        });
+        console.log('✅ Conductores después de filtrar:', normalized.length);
+      }
 
       // keep only active if status explicitly indicates inactivity; otherwise include all
       const filtered = normalized.filter(d => d.status === null || d.status === undefined || d.status === 'ACTIVE' || d.status === 'active' || d.status === true);
       setDrivers(filtered.map(d => ({ ...d, name: d.name || 'Sin nombre' })));
     } catch (error) {
       console.error('Error loading drivers:', error);
-      setDrivers([
-        { id: '1', name: 'Juan Pérez', license: 'D1234567', status: 'ACTIVE' },
-        { id: '2', name: 'María González', license: 'D7654321', status: 'ACTIVE' }
-      ]);
+      setDrivers([]);
+    }
+  };
+
+  const loadAssistants = async (specificCoopId = null) => {
+    try {
+      const params = { role: 'CHOFER' };
+      const cooperativaId = specificCoopId || coopId || user?.cooperativaId;
+      if (cooperativaId) params.cooperativaId = cooperativaId;
+      
+      const response = await staffService.getAll(params);
+      const raw = response.data?.data ?? response.data ?? [];
+      
+      let normalized = (Array.isArray(raw) ? raw : []).filter(a => a).map(a => ({
+        id: a.id != null ? String(a.id) : null,
+        name: a.name || (a.firstName ? `${a.firstName} ${a.lastName || ''}`.trim() : undefined) || a.fullName || null,
+        status: a.status || a.state || (a.active === true ? 'ACTIVE' : a.active === false ? 'INACTIVE' : null),
+        cooperativaId: a.cooperativaId || a.cooperativa?._id || a.cooperativa?.id
+      }));
+      
+      // Filtrado adicional en frontend si es necesario
+      if (cooperativaId) {
+        normalized = normalized.filter(a => {
+          return a.cooperativaId === cooperativaId;
+        });
+        console.log('✅ Ayudantes después de filtrar:', normalized.length);
+      }
+
+      const filtered = normalized.filter(a => a.status === null || a.status === undefined || a.status === 'ACTIVE' || a.status === 'active' || a.status === true);
+      setAssistants(filtered.map(a => ({ ...a, name: a.name || 'Sin nombre' })));
+    } catch (error) {
+      console.error('Error loading assistants:', error);
+      setAssistants([]);
     }
   };
 
@@ -401,6 +540,7 @@ export default function TripsManagement() {
   const handleEdit = (trip) => {
     setEditingTrip(trip);
     setFormData({
+      cooperativaId: trip.cooperativaId || coopId || user?.cooperativaId || '',
       frequencyId: trip.frequency?.id != null ? String(trip.frequency?.id) : (trip.frequencyId != null ? String(trip.frequencyId) : ''),
       busId: trip.bus?.id != null ? String(trip.bus?.id) : (trip.busId != null ? String(trip.busId) : ''),
       driverId: trip.driver?.id != null ? String(trip.driver?.id) : (trip.driverId != null ? String(trip.driverId) : ''),
@@ -438,7 +578,9 @@ export default function TripsManagement() {
   };
 
   const resetForm = () => {
+    const defaultCoopId = coopId || user?.cooperativaId || '';
     setFormData({
+      cooperativaId: defaultCoopId,
       frequencyId: '',
       busId: '',
       driverId: '',
@@ -448,6 +590,31 @@ export default function TripsManagement() {
       price: '',
       status: 'SCHEDULED'
     });
+  };
+
+  const handleCooperativaChange = async (newCoopId) => {
+    // Actualizar el formulario y limpiar campos dependientes
+    setFormData(prev => ({ 
+      ...prev, 
+      cooperativaId: newCoopId,
+      frequencyId: '',
+      busId: '',
+      driverId: '',
+      assistantId: ''
+    }));
+    
+    // Recargar todos los datos filtrados por la nueva cooperativa
+    try {
+      await Promise.all([
+        loadFrequencies(newCoopId),
+        loadBuses(newCoopId),
+        loadDrivers(newCoopId),
+        loadAssistants(newCoopId)
+      ]);
+    } catch (error) {
+      console.error('Error recargando datos para la cooperativa:', error);
+      toast.error('Error al cargar datos de la cooperativa');
+    }
   };
 
   const getStatusBadge = (status) => {
@@ -681,6 +848,19 @@ export default function TripsManagement() {
     );
   }
 
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Calendar className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar viajes, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
+      </div>
+    );
+  }
+
   // Aplicar filtros seleccionados (estado y frecuencia)
   const visibleTrips = trips.filter(trip => {
     if (!trip || typeof trip !== 'object') return false;
@@ -814,6 +994,28 @@ export default function TripsManagement() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Selector de Cooperativa (solo SUPER_ADMIN) */}
+              {user?.role === 'SUPER_ADMIN' && (
+                <div className="space-y-2 col-span-2">
+                  <Label htmlFor="cooperativaId">Cooperativa *</Label>
+                  <Select 
+                    value={formData.cooperativaId} 
+                    onValueChange={handleCooperativaChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar cooperativa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cooperativas.filter(c => c.isActive !== false).map((coop) => (
+                        <SelectItem key={coop.id} value={coop.id}>
+                          {coop.nombre || coop.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="frequencyId">Frecuencia *</Label>
                 {!editingTrip ? (
@@ -904,11 +1106,13 @@ export default function TripsManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">-- Ninguno --</SelectItem>
-                    {drivers.map((driver) => (
-                      <SelectItem key={driver.id} value={driver.id}>
-                        {driver.name} {driver.license ? `- ${driver.license}` : ''}
-                      </SelectItem>
-                    ))}
+                    {assistants
+                      .filter(assistant => assistant.id !== formData.driverId)
+                      .map((assistant) => (
+                        <SelectItem key={assistant.id} value={assistant.id}>
+                          {assistant.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

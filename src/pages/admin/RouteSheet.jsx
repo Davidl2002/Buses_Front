@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Calendar, Search, Truck } from 'lucide-react';
+import { Calendar, Search, Truck, FileDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { busGroupService, tripService } from '@/services';
 import toast from 'react-hot-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 
 export default function RouteSheet() {
   const [date, setDate] = useState('');
@@ -15,21 +17,51 @@ export default function RouteSheet() {
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
   const [sheet, setSheet] = useState(null);
+  const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
 
   useEffect(() => {
-    loadGroups();
-  }, []);
+    if (coopId || user?.cooperativaId) {
+      loadGroups();
+    }
+  }, [coopId]);
 
   const loadGroups = async () => {
     try {
-      const res = await busGroupService.getAll();
-      const data = res.data?.data || res.data || [];
+      const params = {};
+      const targetCoop = coopId || user?.cooperativaId;
+      if (targetCoop) params.cooperativaId = targetCoop;
+      
+      const res = await busGroupService.getAll(params);
+      let data = res.data?.data || res.data || [];
+      
+      // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+      if (user?.role === 'SUPER_ADMIN' && coopId) {
+        console.log('🔍 RouteSheet - Filtrando grupos para cooperativa:', coopId);
+        data = data.filter(bg => {
+          const bgCoopId = bg.cooperativaId || bg.cooperativa?._id || bg.cooperativa?.id;
+          return bgCoopId === coopId;
+        });
+        console.log('✅ Grupos filtrados:', data.length, 'registros');
+      }
+      
       setGroups(data);
     } catch (error) {
       console.error('Error loading groups', error);
       toast.error('No se pudieron cargar los grupos de buses');
     }
+  };
+
+  const getStatusLabel = (status) => {
+    const statusMap = {
+      'SCHEDULED': 'Programado',
+      'IN_PROGRESS': 'En Progreso',
+      'COMPLETED': 'Completado',
+      'CANCELLED': 'Cancelado'
+    };
+    return statusMap[status] || status;
   };
 
   const handleSearch = async (e) => {
@@ -65,6 +97,77 @@ export default function RouteSheet() {
       setLoading(false);
     }
   };
+
+  const handleGeneratePdf = async () => {
+    if (!groupId) {
+      toast.error('Seleccione un grupo (obligatorio)');
+      return;
+    }
+
+    if (!date && !(startDate && endDate)) {
+      toast.error('Ingrese una fecha o un rango (startDate y endDate)');
+      return;
+    }
+
+    setGeneratingPdf(true);
+    try {
+      const params = new URLSearchParams({ groupId });
+      if (date) params.append('date', date);
+      else {
+        params.append('startDate', startDate);
+        params.append('endDate', endDate);
+      }
+
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/trips/route-sheet/pdf?${params.toString()}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Error al generar el PDF');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      
+      // Nombre del archivo con fecha
+      const fileName = date 
+        ? `hoja-ruta-${date}.pdf` 
+        : `hoja-ruta-${startDate}-${endDate}.pdf`;
+      a.download = fileName;
+      
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast.success('PDF generado exitosamente');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error(error.message || 'Error al generar el PDF');
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Truck className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para ver la hoja de ruta, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -105,10 +208,29 @@ export default function RouteSheet() {
               <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setDate(''); }} />
             </div>
 
-            <div>
+            <div className="flex gap-2">
               <Button type="submit" className="flex items-center gap-2" disabled={loading}>
                 <Search className="h-4 w-4" />
                 Buscar
+              </Button>
+              <Button 
+                type="button" 
+                variant="outline" 
+                className="flex items-center gap-2" 
+                disabled={generatingPdf || !groupId || (!date && !(startDate && endDate))}
+                onClick={handleGeneratePdf}
+              >
+                {generatingPdf ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
+                    Generando...
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="h-4 w-4" />
+                    Generar PDF
+                  </>
+                )}
               </Button>
             </div>
           </form>
@@ -155,7 +277,7 @@ export default function RouteSheet() {
                           <TableCell>{t.passengersCount ?? t.passengers_count ?? '-'}</TableCell>
                           <TableCell>{t.driver?.name || t.driverName || '-'}</TableCell>
                           <TableCell>{t.assistant?.name || t.assistantName || '-'}</TableCell>
-                          <TableCell>{t.status || '-'}</TableCell>
+                          <TableCell>{getStatusLabel(t.status) || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
