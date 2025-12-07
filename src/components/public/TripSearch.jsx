@@ -248,8 +248,9 @@ export default function TripSearch({ onSelectTrip }) {
       toast.error('Por favor complete todos los campos obligatorios');
       return;
     }
-
     setLoading(true);
+    // Limpiar resultados previos para que la vista se actualice inmediatamente
+    setTrips([]);
     try {
       const amenities = [];
       if (formData.hasWifi) amenities.push('wifi');
@@ -262,51 +263,21 @@ export default function TripSearch({ onSelectTrip }) {
         destination: formData.destination,
         date: formData.date,
         passengers: 1,
-        isDirect: false
+        isDirect: false,
+        include: 'bus'
       };
 
-      // Hint to backend to include bus details in search results when supported
-      searchParams.include = 'bus';
-
-      if (amenities.length) searchParams.amenities = amenities.join(',');
       if (amenities.length) searchParams.amenities = amenities.join(',');
 
       const response = await tripService.search(searchParams);
       const tripsData = response.data?.data || response.data || [];
 
-      // Helper para comprobar amenities en variantes de propiedades del objeto `bus`
-      const hasAmenity = (bus = {}, names = []) => {
-        if (!bus) return false;
-        for (const n of names) {
-          if (Object.prototype.hasOwnProperty.call(bus, n) && !!bus[n]) return true;
-        }
-        return false;
-      };
-
-      const matchesAmenities = (tripObj) => {
-        const bus = tripObj.bus || {};
-        if (formData.hasAC) {
-          if (!hasAmenity(bus, ['hasAC', 'hasAc', 'has_ac', 'ac', 'has_air', 'air'])) return false;
-        }
-        if (formData.hasWifi) {
-          if (!hasAmenity(bus, ['hasWifi', 'has_wifi', 'wifi', 'hasWiFi'])) return false;
-        }
-        if (formData.hasBathroom) {
-          if (!hasAmenity(bus, ['hasBathroom', 'has_bathroom', 'hasToilet', 'has_toilet', 'toilet', 'hasWC'])) return false;
-        }
-        if (formData.hasTV) {
-          if (!hasAmenity(bus, ['hasTV', 'has_tv', 'tv', 'hasTelevision', 'television'])) return false;
-        }
-        return true;
-      };
-
-      // Normalizar campos para que la UI muestre la información real cuando venga del backend
-      const normalized = (tripsData || []).map(t => {
+      // Normalizar resultados en una variable local `results`
+      let results = (tripsData || []).map(t => {
         const bus = t.bus || t.vehicle || t.coach || {};
         const placa = bus.placa || bus.plate || bus.plateNumber || bus.licensePlate || bus.registration || bus.name || '';
         const model = bus.modelo || bus.model || bus.marca || bus.brand || bus.make || bus.manufacturer || '';
 
-        // Price fallbacks: frequency.price, trip.price, route.basePrice, trip.basePrice
         const rawPrice = t.frequency?.price ?? t.price ?? t.fare ?? t.cost ?? t.route?.basePrice ?? t.basePrice ?? 0;
         const price = typeof rawPrice === 'string' ? parseFloat(rawPrice) || 0 : (rawPrice || 0);
 
@@ -328,11 +299,9 @@ export default function TripSearch({ onSelectTrip }) {
         };
       });
 
-      setTrips(normalized);
-
-      // Si el backend de búsqueda no incluye route/bus completos, intentar obtener detalles públicos completos
+      // Si faltan detalles (route/bus/stops), intentar obtener detalles públicos y fusionarlos en `results`
       try {
-        const needsFetch = normalized.filter(t => !t.route || !t.bus || !t.route?.stops || (Array.isArray(t.route?.stops) && t.route.stops.length === 0));
+        const needsFetch = results.filter(t => !t.route || !t.bus || !t.route?.stops || (Array.isArray(t.route?.stops) && t.route.stops.length === 0));
         if (needsFetch.length) {
           const details = await Promise.all(needsFetch.map(async (t) => {
             try {
@@ -346,7 +315,7 @@ export default function TripSearch({ onSelectTrip }) {
           const detailsMap = new Map();
           details.forEach(d => { if (d && d.id) detailsMap.set(d.id, d); });
 
-          const merged = normalized.map(t => {
+          results = results.map(t => {
             const d = detailsMap.get(t.id);
             if (!d) return t;
             const mergedBus = d.bus || t.bus || {};
@@ -372,33 +341,44 @@ export default function TripSearch({ onSelectTrip }) {
               soldSeats
             };
           });
-
-          setTrips(merged);
         }
       } catch (err) {
-        // no bloquear si falla la llamada adicional
         console.warn('No se pudieron obtener detalles públicos adicionales:', err);
       }
 
-      // Aplicar filtrado en cliente según amenities seleccionadas (por si el backend no lo filtró)
-      try {
-        const current = (Array.isArray(tripsData) && tripsData.length > 0) ? (trips.length ? trips : (await Promise.resolve([]))) : [];
-        // `trips` state already contains merged or normalized set via setTrips above; usarlo
-        const sourceList = (trips && trips.length) ? trips : (normalized || []);
-        const finalFiltered = sourceList.filter(matchesAmenities);
-        setTrips(finalFiltered);
-        if (finalFiltered.length === 0) {
-          toast.error('No se encontraron viajes con los filtros seleccionados');
-        } else {
-          toast.success(`${finalFiltered.length} viajes encontrados`);
+      // Filtrar por amenities en la variable local `results`
+      const hasAmenity = (bus = {}, names = []) => {
+        if (!bus) return false;
+        for (const n of names) {
+          if (Object.prototype.hasOwnProperty.call(bus, n) && !!bus[n]) return true;
         }
-      } catch (err) {
-        // si algo falla en el filtrado, mantener la lista original
-        if (tripsData.length === 0) {
-          toast.error('No se encontraron viajes');
-        } else {
-          toast.success(`${tripsData.length} viajes encontrados`);
+        return false;
+      };
+
+      const matchesAmenities = (tripObj) => {
+        const bus = tripObj.bus || {};
+        if (formData.hasAC) {
+          if (!hasAmenity(bus, ['hasAC', 'hasAc', 'has_ac', 'ac', 'has_air', 'air'])) return false;
         }
+        if (formData.hasWifi) {
+          if (!hasAmenity(bus, ['hasWifi', 'has_wifi', 'wifi', 'hasWiFi'])) return false;
+        }
+        if (formData.hasBathroom) {
+          if (!hasAmenity(bus, ['hasBathroom', 'has_bathroom', 'hasToilet', 'has_toilet', 'toilet', 'hasWC'])) return false;
+        }
+        if (formData.hasTV) {
+          if (!hasAmenity(bus, ['hasTV', 'has_tv', 'tv', 'hasTelevision', 'television'])) return false;
+        }
+        return true;
+      };
+
+      const finalFiltered = (results || []).filter(matchesAmenities);
+      setTrips(finalFiltered);
+
+      if (finalFiltered.length === 0) {
+        toast.error('No se encontraron viajes con los filtros seleccionados');
+      } else {
+        toast.success(`${finalFiltered.length} viajes encontrados`);
       }
     } catch (error) {
       toast.error('Error al buscar viajes');

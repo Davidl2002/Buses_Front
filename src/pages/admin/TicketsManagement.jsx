@@ -46,6 +46,7 @@ export default function TicketsManagement() {
   const [createForm, setCreateForm] = useState({ frequencyId: '', tripId: '', selectedDate: '', busId: '', seatNumber: '', passengerName: '', passengerCedula: '', passengerEmail: '', passengerPhone: '', paymentMethod: 'CASH', boardingStop: '', dropoffStop: '' });
   const [availableDates, setAvailableDates] = useState([]);
   const [availableBuses, setAvailableBuses] = useState([]);
+  const [availableTripsForDate, setAvailableTripsForDate] = useState([]);
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [selectedBusSeats, setSelectedBusSeats] = useState([]);
   const [seatMapData, setSeatMapData] = useState({ rows: 0, columns: 0, seats: [] });
@@ -323,6 +324,36 @@ export default function TicketsManagement() {
     }
   };
 
+  const handleSelectTripById = async (tripId) => {
+    if (!tripId) {
+      setAvailableBuses([]);
+      setSelectedTrip(null);
+      setCreateForm(cf => ({ ...cf, tripId: '', busId: '', seatNumber: '' }));
+      return;
+    }
+    try {
+      const res = await tripService.getById(tripId);
+      const tripDetail = res.data?.data || res.data || null;
+      if (!tripDetail) {
+        toast.error('No se pudo obtener información del viaje seleccionado');
+        return;
+      }
+      setSelectedTrip(tripDetail);
+      setCreateForm(cf => ({ ...cf, tripId: tripDetail.id || tripDetail._id, busId: '', seatNumber: '', boardingStop: tripDetail.route?.origin || tripDetail.origin || '', dropoffStop: tripDetail.route?.destination || tripDetail.destination || '' }));
+
+      const busId = tripDetail.busId || tripDetail.bus?.id || tripDetail.bus?._id;
+      const busObj = tripDetail.bus || tripDetail.vehicle || {};
+      const departureTime = tripDetail.departureTime || tripDetail.time || tripDetail.frequency?.departureTime || '';
+      const buses = [];
+      if (busId) buses.push({ id: busId, tripId: tripDetail.id || tripDetail._id, tripData: tripDetail, bus: busObj, departureTime });
+      else if (Object.keys(busObj || {}).length) buses.push({ id: busObj.id || busObj._id || JSON.stringify(busObj), tripId: tripDetail.id || tripDetail._id, tripData: tripDetail, bus: busObj, departureTime });
+      setAvailableBuses(buses);
+    } catch (err) {
+      console.error('Error loading trip by id:', err);
+      toast.error('Error al cargar el viaje seleccionado');
+    }
+  };
+
   const filterTickets = () => {
     let filtered = [...tickets];
 
@@ -491,19 +522,62 @@ export default function TicketsManagement() {
       
       const tripsData = tripsResponse.data?.data || tripsResponse.data || [];
       const trips = Array.isArray(tripsData) ? tripsData : [];
-      
-      // Obtener fecha actual de Ecuador
+
+      // Aplicar filtrado cliente por frecuencia (por si el backend no respeta params)
+      const tripsFilteredByFreq = trips.filter(t => {
+        const tf = String(t.frequencyId || t.frequency?.id || t.frequency?._id || '').trim();
+        return tf && tf === String(freqId);
+      });
+      const effectiveTrips = tripsFilteredByFreq.length ? tripsFilteredByFreq : trips;
+
+      // Limpiar estados relacionados a la selección previa
+      setAvailableTripsForDate([]);
+      setAvailableBuses([]);
+      setSelectedTrip(null);
+
+      // Obtener fecha/hora actual en Ecuador
       const now = new Date();
-      const ecuadorTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Guayaquil' }));
-      const today = ecuadorTime.toISOString().split('T')[0];
-      
-      // Filtrar fechas futuras y únicas
-      const dates = trips
-        .map(t => t.date || t.departureDate)
-        .filter(d => d && d >= today)
-        .filter((v, i, a) => a.indexOf(v) === i)
-        .sort();
-      
+      const ecuadorNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Guayaquil' }));
+      const today = ecuadorNow.toISOString().split('T')[0];
+
+      // Helper: calcular timestamp UTC del trip asumiendo que la hora está en zona America/Guayaquil
+      const toTripTimestamp = (t) => {
+        try {
+          const dateStr = String(t.date || t.departureDate || '').split('T')[0];
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+          const [y, m, d] = dateStr.split('-').map(Number);
+          const timeStr = String(t.departureTime || t.time || '').trim();
+          let hh = 0, mm = 0;
+          if (timeStr) {
+            const parts = timeStr.split(':').map(p => parseInt(p, 10));
+            hh = isNaN(parts[0]) ? 0 : parts[0];
+            mm = isNaN(parts[1]) ? 0 : parts[1];
+          }
+          // Construir timestamp UTC equivalente a la hora local de Ecuador: UTC = Date.UTC(...) + offsetHours*3600000
+          // Ecuador (America/Guayaquil) está en UTC-5 sin DST
+          const offsetHours = 5;
+          return Date.UTC(y, m - 1, d, hh, mm) + offsetHours * 60 * 60 * 1000;
+        } catch (e) {
+          return null;
+        }
+      };
+
+      // Filtrar trips que están programados (SCHEDULED) y cuya fecha/hora esté en el futuro relativo a Ecuador
+      const futureTrips = trips.filter(t => {
+        const statusOk = (t.status || '').toUpperCase() === 'SCHEDULED';
+        if (!statusOk) return false;
+        const ts = toTripTimestamp(t);
+        if (!ts) return false;
+        return ts > ecuadorNow.getTime();
+      });
+
+      // Obtener fechas únicas de los futureTrips
+      // Use only future trips that belong to the frequency (effectiveTrips)
+      const dates = Array.from(new Set(futureTrips
+        .filter(t => (effectiveTrips || []).some(et => (et.id || et._id) === (t.id || t._id)))
+        .map(t => String(t.date || t.departureDate).split('T')[0])
+      )).filter(Boolean).sort();
+
       setAvailableDates(dates);
       setCreateForm(cf => ({ ...cf, frequencyId: freqId, selectedDate: '', busId: '', tripId: '', seatNumber: '' }));
     } catch (err) {
@@ -526,32 +600,83 @@ export default function TicketsManagement() {
       
       const tripsData = tripsResponse.data?.data || tripsResponse.data || [];
       const trips = Array.isArray(tripsData) ? tripsData : [];
+
+      // Asegurar que trabajamos solo con trips de la frecuencia seleccionada (cliente)
+      const freqIdStr = String(createForm.frequencyId || '').trim();
+      const tripsOfFreq = trips.filter(t => {
+        const tf = String(t.frequencyId || t.frequency?.id || t.frequency?._id || '').trim();
+        return tf && tf === freqIdStr;
+      });
+      const effectiveTripsList = tripsOfFreq.length ? tripsOfFreq : trips;
       
-      // Filtrar trips por fecha seleccionada
-      const tripsForDate = trips.filter(t => {
-        const tripDate = t.date || t.departureDate;
-        return tripDate === date;
+      // Filtrar trips por fecha seleccionada, estado SCHEDULED y que estén en el futuro
+      const ecuadorNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Guayaquil' }));
+      const tripsForDate = effectiveTripsList.filter(t => {
+        const tripDate = String(t.date || t.departureDate || '').split('T')[0];
+        if (tripDate !== date) return false;
+        if ((t.status || '').toUpperCase() !== 'SCHEDULED') return false;
+        // calcular timestamp similar a handleSelectFrequency
+        try {
+          const [y, m, d] = tripDate.split('-').map(Number);
+          const timeStr = String(t.departureTime || t.time || '').trim();
+          let hh = 0, mm = 0;
+          if (timeStr) {
+            const parts = timeStr.split(':').map(p => parseInt(p, 10));
+            hh = isNaN(parts[0]) ? 0 : parts[0];
+            mm = isNaN(parts[1]) ? 0 : parts[1];
+          }
+          const offsetHours = 5; // America/Guayaquil UTC-5
+          const tripTs = Date.UTC(y, m - 1, d, hh, mm) + offsetHours * 60 * 60 * 1000;
+          if (tripTs <= ecuadorNow.getTime()) return false;
+        } catch (e) {
+          return false;
+        }
+        return true;
       });
       
-      // Extraer buses únicos con sus trips
-      const busesMap = new Map();
-      for (const trip of tripsForDate) {
-        const busId = trip.busId || trip.bus?.id || trip.bus?._id;
-        const tripId = trip.id || trip._id;
-        if (busId && tripId) {
-          if (!busesMap.has(busId)) {
-            busesMap.set(busId, {
-              id: busId,
-              tripId: tripId,
-              tripData: trip, // Guardar el trip completo
-              bus: trip.bus,
-              departureTime: trip.departureTime || trip.time
-            });
+      // Guardar trips disponibles para la fecha y limpiar buses/selecciones previas
+      setAvailableTripsForDate(tripsForDate);
+      setAvailableBuses([]);
+      setSelectedTrip(null);
+
+      // Si solo hay un viaje en esa fecha, cargar automáticamente sus buses (habitualmente 1)
+      if (tripsForDate.length === 1) {
+        const trip = tripsForDate[0];
+        // Usar el endpoint /trips/:id para obtener detalles del viaje
+        try {
+          const res = await tripService.getById(trip.id || trip._id);
+          const tripDetail = res.data?.data || res.data || trip;
+          setSelectedTrip(tripDetail);
+          setCreateForm(cf => ({ ...cf, tripId: tripDetail.id || tripDetail._id, busId: '', seatNumber: '', boardingStop: tripDetail.route?.origin || tripDetail.origin || '', dropoffStop: tripDetail.route?.destination || tripDetail.destination || '' }));
+          const busId = tripDetail.busId || tripDetail.bus?.id || tripDetail.bus?._id;
+          const busObj = tripDetail.bus || tripDetail.vehicle || {};
+          const departureTime = tripDetail.departureTime || tripDetail.time || tripDetail.frequency?.departureTime || '';
+          const buses = [];
+          if (busId) buses.push({ id: busId, tripId: tripDetail.id || tripDetail._id, tripData: tripDetail, bus: busObj, departureTime });
+          else if (Object.keys(busObj || {}).length) buses.push({ id: busObj.id || busObj._id || JSON.stringify(busObj), tripId: tripDetail.id || tripDetail._id, tripData: tripDetail, bus: busObj, departureTime });
+          setAvailableBuses(buses);
+        } catch (err) {
+          console.error('Error loading trip details for single trip date:', err);
+          // Fallback: construir buses desde tripsForDate
+          const busesMap = new Map();
+          for (const trip of tripsForDate) {
+            const busId = trip.busId || trip.bus?.id || trip.bus?._id;
+            const tripId = trip.id || trip._id;
+            if (busId && tripId) {
+              if (!busesMap.has(busId)) {
+                busesMap.set(busId, {
+                  id: busId,
+                  tripId: tripId,
+                  tripData: trip,
+                  bus: trip.bus,
+                  departureTime: trip.departureTime || trip.time
+                });
+              }
+            }
           }
+          setAvailableBuses(Array.from(busesMap.values()));
         }
       }
-      
-      setAvailableBuses(Array.from(busesMap.values()));
     } catch (err) {
       console.error('Error loading buses:', err);
       toast.error('Error al cargar buses disponibles');
@@ -1305,8 +1430,28 @@ export default function TicketsManagement() {
                       </div>
                     )}
 
+                    {/* Selección de viaje (si hay más de uno en la fecha) */}
+                    {createForm.selectedDate && availableTripsForDate && availableTripsForDate.length > 0 && (
+                      <div className="col-span-2">
+                        <Label>Viaje *</Label>
+                        <select
+                          className="w-full p-2 rounded border"
+                          value={createForm.tripId || ''}
+                          onChange={(e) => handleSelectTripById(e.target.value)}
+                          required
+                        >
+                          <option value="">-- Seleccionar viaje --</option>
+                          {availableTripsForDate.map(t => (
+                            <option key={t.id || t._id} value={t.id || t._id}>
+                              {(t.departureTime || t.time || t.frequency?.departureTime || '').toString()} - {t.bus?.placa || t.busId || 'Bus'} • {t.route?.origin || t.origin || ''} → {t.route?.destination || t.destination || ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
                     {/* Bus */}
-                    {createForm.selectedDate && (
+                    {availableBuses && availableBuses.length > 0 && (
                       <div className="col-span-2">
                         <Label>Bus *</Label>
                         <select 
