@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import Header from '@/components/layout/Header';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Lazy load admin pages
 const Dashboard = lazy(() => import('@/pages/admin/Dashboard'));
@@ -29,11 +30,14 @@ const LoadingSpinner = () => (
 );
 
 export default function AdminLayout() {
+  const { user } = useAuth();
+  const isOficinista = user?.role === 'OFICINISTA';
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       <div className="flex h-[calc(100vh-4rem)]">
-        <AdminSidebar />
+        {!isOficinista && <AdminSidebar />}
         <div className="flex-1 overflow-auto p-6">
           <Suspense fallback={<LoadingSpinner />}>
             <Routes>

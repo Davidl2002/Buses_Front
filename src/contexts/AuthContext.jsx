@@ -41,18 +41,26 @@ export const AuthProvider = ({ children }) => {
               setCooperativa(null);
             }
           }
-          // ADMIN: cargar su cooperativa usando getAll (retorna solo su cooperativa)
-          else if (parsed.role === 'ADMIN' && parsed.cooperativaId) {
+          // ADMIN, CHOFER, OFICINISTA: cargar su cooperativa
+          else if ((parsed.role === 'ADMIN' || parsed.role === 'CHOFER' || parsed.role === 'OFICINISTA') && parsed.cooperativaId) {
             try {
-              const coopRes = await cooperativaService.getAll();
-              const cooperativas = coopRes.data.data || [];
-              const miCooperativa = cooperativas.find(c => 
-                (c.id === parsed.cooperativaId || c._id === parsed.cooperativaId)
-              );
-              setCooperativa(miCooperativa || null);
+              // Intentar obtener directamente por ID
+              const coopRes = await cooperativaService.getById(parsed.cooperativaId);
+              setCooperativa(coopRes.data.data || null);
             } catch (err) {
-              console.error('Error loading cooperativa for ADMIN:', err);
-              setCooperativa(null);
+              console.error('Error loading cooperativa by ID, trying getAll:', err);
+              try {
+                // Si falla, intentar con getAll
+                const coopRes = await cooperativaService.getAll();
+                const cooperativas = coopRes.data.data || [];
+                const miCooperativa = cooperativas.find(c => 
+                  (c.id === parsed.cooperativaId || c._id === parsed.cooperativaId)
+                );
+                setCooperativa(miCooperativa || null);
+              } catch (err2) {
+                console.error('Error loading cooperativa with getAll:', err2);
+                setCooperativa(null);
+              }
             }
           }
           
@@ -153,8 +161,8 @@ export const AuthProvider = ({ children }) => {
       if (userData.role === 'SUPER_ADMIN') {
         setCooperativa(null);
       }
-      // ADMIN: cargar su cooperativa
-      else if (userData.role === 'ADMIN' && userData.cooperativaId) {
+      // ADMIN, CHOFER, OFICINISTA: cargar su cooperativa
+      else if ((userData.role === 'ADMIN' || userData.role === 'CHOFER' || userData.role === 'OFICINISTA') && userData.cooperativaId) {
         try {
           const coopRes = await cooperativaService.getAll();
           const cooperativas = coopRes.data.data || [];
@@ -163,7 +171,7 @@ export const AuthProvider = ({ children }) => {
           );
           setCooperativa(miCooperativa || null);
         } catch (err) {
-          console.error('Error loading cooperativa for ADMIN after login:', err);
+          console.error('Error loading cooperativa after login:', err);
           setCooperativa(null);
         }
       }
@@ -189,8 +197,8 @@ export const AuthProvider = ({ children }) => {
       if (newUser.role === 'SUPER_ADMIN') {
         setCooperativa(null);
       }
-      // ADMIN: cargar su cooperativa
-      else if (newUser.role === 'ADMIN' && newUser.cooperativaId) {
+      // ADMIN, CHOFER, OFICINISTA: cargar su cooperativa
+      else if ((newUser.role === 'ADMIN' || newUser.role === 'CHOFER' || newUser.role === 'OFICINISTA') && newUser.cooperativaId) {
         try {
           const coopRes = await cooperativaService.getAll();
           const cooperativas = coopRes.data.data || [];
@@ -199,7 +207,7 @@ export const AuthProvider = ({ children }) => {
           );
           setCooperativa(miCooperativa || null);
         } catch (err) {
-          console.error('Error loading cooperativa for ADMIN after register:', err);
+          console.error('Error loading cooperativa after register:', err);
           setCooperativa(null);
         }
       }
@@ -240,6 +248,8 @@ export const AuthProvider = ({ children }) => {
 
   const refreshCooperativa = async () => {
     try {
+      console.log('🔄 refreshCooperativa llamado para rol:', user?.role);
+      
       // SUPER_ADMIN: refrescar la cooperativa activa seleccionada
       if (user?.role === 'SUPER_ADMIN') {
         const activeCoopId = localStorage.getItem('activeCooperativaId');
@@ -247,24 +257,39 @@ export const AuthProvider = ({ children }) => {
         
         const res = await cooperativaService.getById(activeCoopId);
         const freshCoop = res.data.data || null;
+        console.log('✅ Cooperativa refrescada (SUPER_ADMIN):', freshCoop);
         setCooperativa(freshCoop);
         return freshCoop;
       }
       
-      // ADMIN: refrescar su cooperativa usando getAll
-      if (user?.role === 'ADMIN' && user?.cooperativaId) {
-        const coopRes = await cooperativaService.getAll();
-        const cooperativas = coopRes.data.data || [];
-        const miCooperativa = cooperativas.find(c => 
-          (c.id === user.cooperativaId || c._id === user.cooperativaId)
-        );
-        setCooperativa(miCooperativa || null);
-        return miCooperativa || null;
+      // ADMIN, CHOFER, OFICINISTA: refrescar su cooperativa
+      if ((user?.role === 'ADMIN' || user?.role === 'CHOFER' || user?.role === 'OFICINISTA') && user?.cooperativaId) {
+        console.log('🔍 Refrescando cooperativa ID:', user.cooperativaId);
+        try {
+          // Intentar obtener directamente por ID
+          const res = await cooperativaService.getById(user.cooperativaId);
+          const miCooperativa = res.data.data || null;
+          console.log('✅ Cooperativa refrescada:', miCooperativa);
+          setCooperativa(miCooperativa);
+          return miCooperativa;
+        } catch (err) {
+          console.log('⚠️ Error con getById, intentando getAll...');
+          // Si falla, intentar con getAll
+          const coopRes = await cooperativaService.getAll();
+          const cooperativas = coopRes.data.data || [];
+          const miCooperativa = cooperativas.find(c => 
+            (c.id === user.cooperativaId || c._id === user.cooperativaId)
+          );
+          console.log('✅ Cooperativa refrescada (getAll):', miCooperativa);
+          setCooperativa(miCooperativa || null);
+          return miCooperativa || null;
+        }
       }
       
+      console.log('⚠️ No se cumplió ninguna condición para refrescar');
       return null;
     } catch (err) {
-      console.error('Error refreshing cooperativa:', err);
+      console.error('❌ Error refreshing cooperativa:', err);
       return null;
     }
   };

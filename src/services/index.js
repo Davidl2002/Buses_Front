@@ -1,4 +1,5 @@
 import api from './api';
+export { API_BASE_URL } from './api';
 
 // Auth
 export const authService = {
@@ -22,7 +23,9 @@ export const tripService = {
   getSeats: (id) => api.get(`/trips/${id}/seats`),
   getMyTrips: (params) => api.get('/trips', { params }),
   assignPersonnel: (id, data) => api.patch(`/trips/${id}/personnel`, data),
-  getRouteSheet: (params) => api.get('/trips/route-sheet', { params })
+  getRouteSheet: (params) => api.get('/trips/route-sheet', { params }),
+  // PATCH /api/trips/:id/status - Cambiar estado del viaje
+  updateStatus: (id, data) => api.patch(`/trips/${id}/status`, data),
 };
 
 // Tickets
@@ -110,8 +113,43 @@ export const frequencyService = {
 export const operationService = {
   validateQR: (data) => api.post('/operations/validate-qr', data),
   getManifest: (tripId) => api.get(`/operations/manifest/${tripId}`),
-  createExpense: (data) => api.post('/operations/expenses', data),
+  createExpense: (data) => {
+    // Si data contiene un archivo, usar FormData
+    if (data.receipt instanceof File) {
+      const formData = new FormData();
+      formData.append('tripId', data.tripId);
+      formData.append('type', data.type);
+      formData.append('description', data.description);
+      formData.append('amount', data.amount);
+      formData.append('receipt', data.receipt);
+      return api.post('/operations/expenses', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+    }
+    return api.post('/operations/expenses', data);
+  },
   getExpenses: (tripId) => api.get(`/operations/expenses/${tripId}`),
+  // GET /api/operations/my-expenses - Todos los gastos del chofer
+  getMyExpenses: () => api.get('/operations/my-expenses'),
+  // PATCH /api/operations/expenses/:id - Editar un gasto
+  updateExpense: (id, data) => {
+    // Si hay archivo nuevo, usar FormData
+    if (data.receipt instanceof File) {
+      const formData = new FormData();
+      if (data.type) formData.append('type', data.type);
+      if (data.description) formData.append('description', data.description);
+      if (data.amount) formData.append('amount', data.amount);
+      formData.append('receipt', data.receipt);
+      return api.patch(`/operations/expenses/${id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+    }
+    return api.patch(`/operations/expenses/${id}`, data);
+  },
+  // DELETE /api/operations/expenses/:id - Eliminar un gasto
+  deleteExpense: (id) => api.delete(`/operations/expenses/${id}`),
+  // GET /api/operations/expenses/:id/receipt - Ver comprobante de un gasto
+  getExpenseReceipt: (id) => api.get(`/operations/expenses/${id}/receipt`),
   getTripReport: (tripId) => api.get(`/operations/reports/trip/${tripId}`),
   getCooperativaReport: (params) => api.get('/operations/reports/cooperativa', { params }),
 };

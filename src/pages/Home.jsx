@@ -130,18 +130,18 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-12">
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-8 md:py-12">
         <div className="container mx-auto px-4">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
+          <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 md:mb-4">
             MoviPass
           </h1>
-          <p className="text-xl md:text-2xl opacity-90">
+          <p className="text-lg md:text-xl lg:text-2xl opacity-90">
             Tu boleto a cualquier destino del Ecuador
           </p>
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-3 md:px-4 py-4 md:py-8">
         {!selectedTrip && !bookingComplete && (
           <TripSearch onSelectTrip={handleSelectTrip} />
         )}

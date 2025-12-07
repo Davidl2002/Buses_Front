@@ -13,7 +13,6 @@ import {
   Calendar,
   DollarSign,
   RefreshCw,
-  Download,
   Eye,
   X
 } from 'lucide-react';
@@ -29,6 +28,8 @@ import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import AdminSeatMap from '@/components/admin/AdminSeatMap';
 import api from '@/services/api';
 import toast from 'react-hot-toast';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 export default function TicketsManagement() {
   const [tickets, setTickets] = useState([]);
@@ -426,6 +427,16 @@ export default function TicketsManagement() {
         return toast.error('Parada de bajada es requerida');
       }
 
+      // Calcular precio del ticket
+      const calculatedPrice = getSeatPrice();
+      
+      console.log('🎫 CREANDO TICKET CON PRECIO:', {
+        boarding: createForm.boardingStop,
+        dropoff: createForm.dropoffStop,
+        price: calculatedPrice,
+        seatNumber: createForm.seatNumber
+      });
+
       // Normalizar payload
       const payload = {
         tripId: String(createForm.tripId),
@@ -435,7 +446,9 @@ export default function TicketsManagement() {
         passengerEmail: email,
         boardingStop: String(createForm.boardingStop).trim(),
         dropoffStop: String(createForm.dropoffStop).trim(),
-        paymentMethod: createForm.paymentMethod || 'CASH'
+        paymentMethod: createForm.paymentMethod || 'CASH',
+        price: calculatedPrice,
+        amount: calculatedPrice
       };
       if (createForm.passengerPhone) payload.passengerPhone = String(createForm.passengerPhone).trim();
 
@@ -580,6 +593,75 @@ export default function TicketsManagement() {
     }, 600);
   };
 
+  // Calcular precio del ticket según paradas seleccionadas
+  const getSeatPrice = () => {
+    if (!selectedTrip || !createForm.seatNumber) return 0;
+
+    const rawBase = selectedTrip.frequency?.price ?? selectedTrip.price ?? selectedTrip.route?.basePrice ?? selectedTrip.basePrice ?? 0;
+    const parsedBase = typeof rawBase === 'string' ? parseFloat(rawBase) || 0 : (rawBase || 0);
+
+    // Obtener tipo de asiento desde el trip (AdminSeatMap carga esta info)
+    let seatType = 'NORMAL';
+    try {
+      // Intentar obtener del bus o del layout del trip
+      const busLayout = selectedTrip.bus?.seatLayout || selectedTrip.seatLayout || selectedTrip.layout || {};
+      const seats = busLayout.seats || busLayout.map || [];
+      const seat = seats.find(s => {
+        const sNum = s.number ?? s.n ?? s.seatNumber ?? s.id;
+        return String(sNum) === String(createForm.seatNumber);
+      });
+      seatType = seat?.type || seat?.seatType || 'NORMAL';
+    } catch (e) {
+      // Si no se puede obtener, usar NORMAL por defecto
+      seatType = 'NORMAL';
+    }
+
+    let calculatedPrice = parsedBase;
+
+    try {
+      const boarding = createForm.boardingStop || selectedTrip.origin;
+      const dropoff = createForm.dropoffStop || selectedTrip.destination;
+      const routeStops = selectedTrip.route?.stops || selectedTrip.route?.paradas || [];
+
+      if (Array.isArray(routeStops) && routeStops.length) {
+        const boardingStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
+        const dropoffStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(dropoff).toLowerCase());
+
+        if (boarding.toLowerCase() === selectedTrip.origin.toLowerCase() && dropoffStop?.priceFromOrigin !== undefined) {
+          calculatedPrice = Number(dropoffStop.priceFromOrigin) || 0;
+        } else if (boardingStop?.priceFromOrigin !== undefined && dropoff.toLowerCase() === selectedTrip.destination.toLowerCase()) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.max(parsedBase - boardingPrice, 0);
+        } else if (boardingStop?.priceFromOrigin !== undefined && dropoffStop?.priceFromOrigin !== undefined) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          const dropoffPrice = Number(dropoffStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.abs(dropoffPrice - boardingPrice);
+        } else {
+          calculatedPrice = parsedBase;
+        }
+      }
+    } catch (e) {
+      calculatedPrice = parsedBase;
+    }
+
+    switch (String(seatType).toUpperCase()) {
+      case 'VIP':
+        return +(calculatedPrice * 1.3);
+      case 'SEMI_CAMA':
+      case 'SEMI-CAMA':
+        return +(calculatedPrice * 1.5);
+      default:
+        return +calculatedPrice;
+    }
+  };
+
+  const formatPrice = (price) => {
+    return new Intl.NumberFormat('es-EC', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(price);
+  };
+
   // Funciones para renderizar el mapa de asientos
   const getSeatColor = (seat, isSelected) => {
     if (seat.isOccupied) return 'bg-gray-400 text-gray-700 cursor-not-allowed';
@@ -644,9 +726,8 @@ export default function TicketsManagement() {
   const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
     try {
-      return new Date(dateString).toLocaleString('es-EC', {
-        timeZone: 'America/Guayaquil'
-      });
+      const date = parseISO(dateString);
+      return format(date, "dd/MM/yyyy HH:mm", { locale: es });
     } catch (e) {
       return 'N/A';
     }
@@ -655,30 +736,22 @@ export default function TicketsManagement() {
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     try {
-      // Si viene en formato YYYY-MM-DD (string sin hora), parsearlo como fecha local
-      if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-        const [year, month, day] = dateString.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-        
-        return date.toLocaleDateString('es-EC', {
-          weekday: 'short',
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        });
-      }
+      // Extraer solo la parte de la fecha (YYYY-MM-DD) y parsear sin zona horaria
+      const dateOnly = dateString.split('T')[0];
+      const date = parseISO(dateOnly);
       
-      // Si viene con hora (ISO completo), usar timezone
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return 'N/A';
-      
-      return date.toLocaleDateString('es-EC', {
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        timeZone: 'America/Guayaquil'
-      });
+      return format(date, "EEE, dd 'de' MMM yyyy", { locale: es });
+    } catch (e) {
+      return 'N/A';
+    }
+  };
+
+  const formatDateShort = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      const dateOnly = dateString.split('T')[0];
+      const date = parseISO(dateOnly);
+      return format(date, "dd/MM/yyyy", { locale: es });
     } catch (e) {
       return 'N/A';
     }
@@ -709,11 +782,6 @@ export default function TicketsManagement() {
       console.error('Error formateando fecha:', dateString, e);
       return String(dateString);
     }
-  };
-
-  const exportTickets = () => {
-    // Implementar exportación a CSV/PDF
-    toast.success('Exportando tickets...');
   };
 
   if (loading) {
@@ -748,15 +816,11 @@ export default function TicketsManagement() {
           </p>
         </div>
         <div className="flex gap-2">
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Crear Ticket
-            </Button>
-          <Button variant="outline" onClick={exportTickets}>
-            <Download className="h-4 w-4 mr-2" />
-            Exportar
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Crear Ticket
           </Button>
-          <Button onClick={loadTickets}>
+          <Button variant="outline" onClick={loadTickets}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Actualizar
           </Button>
@@ -1296,20 +1360,65 @@ export default function TicketsManagement() {
                           <Input 
                             value={createForm.boardingStop} 
                             onChange={(e) => setCreateForm(f => ({ ...f, boardingStop: e.target.value }))}
-                            placeholder="Ej: Terminal Quitumbe"
+                            placeholder="Parada de origen"
+                            disabled
                             required
                           />
                         </div>
 
                         <div>
                           <Label>Parada de Bajada *</Label>
-                          <Input 
+                          <Select 
                             value={createForm.dropoffStop} 
-                            onChange={(e) => setCreateForm(f => ({ ...f, dropoffStop: e.target.value }))}
-                            placeholder="Ej: Terminal Sur"
-                            required
-                          />
+                            onValueChange={(val) => setCreateForm(f => ({ ...f, dropoffStop: val }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecciona parada de bajada" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {selectedTrip?.destination && (
+                                <SelectItem value={selectedTrip.destination}>
+                                  {selectedTrip.destination} (Destino final)
+                                </SelectItem>
+                              )}
+                              
+                              {(selectedTrip?.route?.stops || selectedTrip?.route?.paradas || [])
+                                .filter(s => {
+                                  const stopName = s.name || s;
+                                  return stopName !== selectedTrip?.origin && stopName !== selectedTrip?.destination;
+                                })
+                                .map((stop, i) => {
+                                  const stopName = stop.name || stop;
+                                  return (
+                                    <SelectItem key={i} value={stopName}>
+                                      {stopName}
+                                    </SelectItem>
+                                  );
+                                })
+                              }
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            El precio se ajustará según la parada seleccionada
+                          </p>
                         </div>
+
+                        {/* Mostrar precio calculado */}
+                        {createForm.seatNumber && createForm.dropoffStop && (
+                          <div key={`price-${createForm.seatNumber}-${createForm.dropoffStop}`} className="col-span-2 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <p className="text-sm font-medium text-blue-900">Precio del ticket</p>
+                                <p className="text-xs text-blue-700">
+                                  Asiento {createForm.seatNumber} • {createForm.boardingStop} → {createForm.dropoffStop}
+                                </p>
+                              </div>
+                              <p className="text-2xl font-bold text-blue-900">
+                                {formatPrice(getSeatPrice())}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
 

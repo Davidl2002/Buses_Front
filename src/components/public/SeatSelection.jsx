@@ -107,6 +107,19 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
     return () => clearInterval(interval);
   }, [countdown]);
 
+  // Actualizar precio cuando cambie el punto de bajada
+  useEffect(() => {
+    if (selectedSeat && passengerData.dropoffStop && bookingStep === 'passenger') {
+      // Re-calcular precio y mostrar actualización
+      const newPrice = getSeatPrice(selectedSeat.type);
+      // Solo mostrar notificación si el dropoff cambió (no en la primera carga)
+      if (passengerData.dropoffStop !== trip.destination && passengerData.dropoffStop !== (trip.origin || '')) {
+        toast.success(`Precio actualizado: ${formatPrice(newPrice)}`, { duration: 2000 });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passengerData.dropoffStop]);
+
   const loadSeatMap = async () => {
     try {
       setLoading(true);
@@ -373,6 +386,11 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       return;
     }
 
+    if (!passengerData.dropoffStop) {
+      toast.error('Selecciona un punto de bajada');
+      return;
+    }
+
     try {
       setLoading(true);
       // 1) REFRESCAR mapa de asientos para confirmar disponibilidad (race condition)
@@ -423,6 +441,15 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       }
 
       // 3) Construir payload para crear ticket
+      const calculatedPrice = getSeatPrice(selectedSeat.type);
+      
+      console.log('🎫 CALCULANDO PRECIO DEL TICKET:');
+      console.log('  - Punto de subida:', passengerData.boardingStop);
+      console.log('  - Punto de bajada:', passengerData.dropoffStop);
+      console.log('  - Tipo de asiento:', selectedSeat.type);
+      console.log('  - Precio calculado:', calculatedPrice);
+      console.log('  - Paradas disponibles:', trip.route?.stops || trip.route?.paradas || []);
+      
       const bookingData = {
         tripId: trip.id,
         seatNumber: selectedSeat.number,
@@ -432,8 +459,12 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         passengerPhone: passengerData.phone || passengerData.mobile || undefined,
         boardingStop: passengerData.boardingStop,
         dropoffStop: passengerData.dropoffStop,
-        paymentMethod: passengerData.paymentMethod || 'CASH'
+        paymentMethod: passengerData.paymentMethod || 'CASH',
+        price: calculatedPrice,
+        amount: calculatedPrice
       };
+      
+      console.log('📤 PAYLOAD ENVIADO AL BACKEND:', bookingData);
 
       // 4) Crear ticket (autenticado). El backend validará disponibilidad y retornará el ticket o error.
       let createRes;
@@ -514,34 +545,63 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
     const rawBase = trip.frequency?.price ?? trip.price ?? trip.route?.basePrice ?? trip.basePrice ?? 0;
     const parsedBase = typeof rawBase === 'string' ? parseFloat(rawBase) || 0 : (rawBase || 0);
 
-    // Si el pasajero sube en una parada intermedia, intentar ajustar el precio usando route.stops.priceFromOrigin
-    let basePrice = parsedBase;
+    // Calcular precio según punto de subida y bajada
+    let calculatedPrice = parsedBase;
     try {
       const boarding = passengerData?.boardingStop || trip.origin;
+      const dropoff = passengerData?.dropoffStop || trip.destination;
       const routeStops = trip.route?.stops || trip.route?.paradas || [];
-      if (boarding && Array.isArray(routeStops) && routeStops.length) {
-        const stop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
-        if (stop && (stop.priceFromOrigin !== undefined && stop.priceFromOrigin !== null)) {
-          // priceFromOrigin representa el precio desde el origen hasta esa parada.
-          // Para calcular el precio desde esa parada hasta el destino, restamos priceFromOrigin del base total.
-          const p = Number(stop.priceFromOrigin) || 0;
-          const adjusted = parsedBase - p;
-          if (adjusted > 0) basePrice = adjusted;
+      
+      
+      if (Array.isArray(routeStops) && routeStops.length) {
+        // Encontrar las paradas de subida y bajada
+        const boardingStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
+        const dropoffStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(dropoff).toLowerCase());
+        
+        
+        // CASO 1: Origen → Parada intermedia
+        // Si subo en el origen y bajo en una parada, el precio es directamente priceFromOrigin de esa parada
+        if (boarding.toLowerCase() === trip.origin.toLowerCase() && dropoffStop?.priceFromOrigin !== undefined) {
+          calculatedPrice = Number(dropoffStop.priceFromOrigin) || 0;
+        }
+        // CASO 2: Parada intermedia → Destino final
+        // Si subo en una parada y bajo en el destino, resto el priceFromOrigin de la parada de subida del precio base
+        else if (boardingStop?.priceFromOrigin !== undefined && dropoff.toLowerCase() === trip.destination.toLowerCase()) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.max(parsedBase - boardingPrice, 0);
+        }
+        // CASO 3: Parada intermedia → Parada intermedia
+        // Si ambas son paradas intermedias, calculo la diferencia entre sus precios
+        else if (boardingStop?.priceFromOrigin !== undefined && dropoffStop?.priceFromOrigin !== undefined) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          const dropoffPrice = Number(dropoffStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.abs(dropoffPrice - boardingPrice);
+        }
+        // CASO 4: Origen → Destino (ruta completa)
+        // Usar precio base
+        else {
+          calculatedPrice = parsedBase;
         }
       }
     } catch (e) {
-      // ignore and use parsedBase
+      calculatedPrice = parsedBase;
     }
 
+    // Aplicar multiplicador según tipo de asiento
+    let finalPrice = calculatedPrice;
     switch (String(seatType).toUpperCase()) {
       case 'VIP':
-        return +(basePrice * 1.3);
+        finalPrice = +(calculatedPrice * 1.3);
+        break;
       case 'SEMI_CAMA':
       case 'SEMI-CAMA':
-        return +(basePrice * 1.5);
+        finalPrice = +(calculatedPrice * 1.5);
+        break;
       default:
-        return +basePrice;
+        finalPrice = +calculatedPrice;
     }
+    
+    return finalPrice;
   };
 
   // rows: number of rows; physicalCols: number of physical columns (e.g. 5 with center aisle)
@@ -983,18 +1043,65 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
                   value={passengerData.boardingStop}
                   onChange={(e) => setPassengerData(prev => ({ ...prev, boardingStop: e.target.value }))}
                   placeholder="Terminal de origen"
+                  disabled
                 />
               </div>
               
               <div className="space-y-2">
-                <Label>Punto de bajada</Label>
-                <Input
-                  value={passengerData.dropoffStop}
-                  onChange={(e) => setPassengerData(prev => ({ ...prev, dropoffStop: e.target.value }))}
-                  placeholder="Terminal de destino"
-                />
+                <Label>Punto de bajada *</Label>
+                <Select 
+                  value={passengerData.dropoffStop} 
+                  onValueChange={(value) => setPassengerData(prev => ({ ...prev, dropoffStop: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona punto de bajada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Destino final */}
+                    <SelectItem value={trip.destination}>
+                      {trip.destination} (Destino final)
+                    </SelectItem>
+                    
+                    {/* Paradas intermedias */}
+                    {(trip.route?.stops || trip.route?.paradas || [])
+                      .filter(s => {
+                        const stopName = s.name || s;
+                        // Excluir origen y destino de las paradas
+                        return stopName !== trip.origin && stopName !== trip.destination;
+                      })
+                      .map((stop, i) => {
+                        const stopName = stop.name || stop;
+                        return (
+                          <SelectItem key={i} value={stopName}>
+                            {stopName}
+                          </SelectItem>
+                        );
+                      })
+                    }
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  El precio se ajustará según la parada seleccionada
+                </p>
               </div>
             </div>
+
+            {/* Mostrar resumen del precio calculado */}
+            {selectedSeat && (
+              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">Precio del ticket</p>
+                    <p className="text-xs text-blue-700">
+                      Asiento {selectedSeat.number} ({String(selectedSeat.type || 'NORMAL').replace(/_/g, ' ')}) • {passengerData.boardingStop} → {passengerData.dropoffStop}
+                    </p>
+                  </div>
+                  <p className="text-2xl font-bold text-blue-900">
+                    {formatPrice(getSeatPrice(selectedSeat.type))}
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-4">
               <Button variant="outline" onClick={() => setBookingStep('seats')} disabled={loading}>
