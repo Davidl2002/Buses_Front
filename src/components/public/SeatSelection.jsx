@@ -107,6 +107,19 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
     return () => clearInterval(interval);
   }, [countdown]);
 
+  // Actualizar precio cuando cambie el punto de bajada
+  useEffect(() => {
+    if (selectedSeat && passengerData.dropoffStop && bookingStep === 'passenger') {
+      // Re-calcular precio y mostrar actualización
+      const newPrice = getSeatPrice(selectedSeat.type);
+      // Solo mostrar notificación si el dropoff cambió (no en la primera carga)
+      if (passengerData.dropoffStop !== trip.destination && passengerData.dropoffStop !== (trip.origin || '')) {
+        toast.success(`Precio actualizado: ${formatPrice(newPrice)}`, { duration: 2000 });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passengerData.dropoffStop]);
+
   const loadSeatMap = async () => {
     try {
       setLoading(true);
@@ -150,6 +163,30 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         floor: s.floor ?? 0,
         type: s.type || s.seatType || null
       }));
+
+      // **DETECCIÓN AUTOMÁTICA DE DOS PISOS**
+      if (seats.length > 0 && !seats.some(s => s.floor === 1)) {
+        const positionMap = new Map();
+        seats.forEach(seat => {
+          const key = `${seat.row}-${seat.col}`;
+          if (!positionMap.has(key)) {
+            positionMap.set(key, []);
+          }
+          positionMap.get(key).push(seat);
+        });
+        
+        const hasDuplicates = Array.from(positionMap.values()).some(seatList => seatList.length > 1);
+        
+        if (hasDuplicates) {
+          const floorAssigned = new Map();
+          seats = seats.map(seat => {
+            const key = `${seat.row}-${seat.col}`;
+            const currentCount = floorAssigned.get(key) || 0;
+            floorAssigned.set(key, currentCount + 1);
+            return { ...seat, floor: currentCount };
+          });
+        }
+      }
 
       // If seat numbers/types present but no row/col, try to infer positions using rows/columns
       const missingPosition = seats.some(s => s.row === undefined || s.row === null || s.col === undefined || s.col === null);
@@ -234,6 +271,31 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
             floor: s.floor ?? 0,
             type: s.type || s.seatType || null
           }));
+          
+          // **DETECCIÓN AUTOMÁTICA DE DOS PISOS en fetchedLayout**
+          if (fetchedSeats.length > 0 && !fetchedSeats.some(s => s.floor === 1)) {
+            const positionMap = new Map();
+            fetchedSeats.forEach(seat => {
+              const key = `${seat.row}-${seat.col}`;
+              if (!positionMap.has(key)) {
+                positionMap.set(key, []);
+              }
+              positionMap.get(key).push(seat);
+            });
+            
+            const hasDuplicates = Array.from(positionMap.values()).some(seatList => seatList.length > 1);
+            
+            if (hasDuplicates) {
+              const floorAssigned = new Map();
+              fetchedSeats = fetchedSeats.map(seat => {
+                const key = `${seat.row}-${seat.col}`;
+                const currentCount = floorAssigned.get(key) || 0;
+                floorAssigned.set(key, currentCount + 1);
+                return { ...seat, floor: currentCount };
+              });
+            }
+          }
+          
           // aplicar normalización de tipos
           const maxRow = fRows && fRows > 0 ? fRows : (fetchedSeats.length ? (Math.max(...fetchedSeats.map(x => x.row || 0)) + 1) : 0);
           fetchedSeats = fetchedSeats.map(s => ({ ...s, type: s.type ? s.type : (s.row === 0 ? 'VIP' : (s.row >= maxRow - 1 ? 'SEMI_CAMA' : 'NORMAL')), isOccupied: occupiedSet.has(String(s.number)) }));
@@ -324,6 +386,11 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       return;
     }
 
+    if (!passengerData.dropoffStop) {
+      toast.error('Selecciona un punto de bajada');
+      return;
+    }
+
     try {
       setLoading(true);
       // 1) REFRESCAR mapa de asientos para confirmar disponibilidad (race condition)
@@ -374,6 +441,15 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
       }
 
       // 3) Construir payload para crear ticket
+      const calculatedPrice = getSeatPrice(selectedSeat.type);
+      
+      console.log('🎫 CALCULANDO PRECIO DEL TICKET:');
+      console.log('  - Punto de subida:', passengerData.boardingStop);
+      console.log('  - Punto de bajada:', passengerData.dropoffStop);
+      console.log('  - Tipo de asiento:', selectedSeat.type);
+      console.log('  - Precio calculado:', calculatedPrice);
+      console.log('  - Paradas disponibles:', trip.route?.stops || trip.route?.paradas || []);
+      
       const bookingData = {
         tripId: trip.id,
         seatNumber: selectedSeat.number,
@@ -383,8 +459,12 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
         passengerPhone: passengerData.phone || passengerData.mobile || undefined,
         boardingStop: passengerData.boardingStop,
         dropoffStop: passengerData.dropoffStop,
-        paymentMethod: passengerData.paymentMethod || 'CASH'
+        paymentMethod: passengerData.paymentMethod || 'CASH',
+        price: calculatedPrice,
+        amount: calculatedPrice
       };
+      
+      console.log('📤 PAYLOAD ENVIADO AL BACKEND:', bookingData);
 
       // 4) Crear ticket (autenticado). El backend validará disponibilidad y retornará el ticket o error.
       let createRes;
@@ -465,34 +545,63 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
     const rawBase = trip.frequency?.price ?? trip.price ?? trip.route?.basePrice ?? trip.basePrice ?? 0;
     const parsedBase = typeof rawBase === 'string' ? parseFloat(rawBase) || 0 : (rawBase || 0);
 
-    // Si el pasajero sube en una parada intermedia, intentar ajustar el precio usando route.stops.priceFromOrigin
-    let basePrice = parsedBase;
+    // Calcular precio según punto de subida y bajada
+    let calculatedPrice = parsedBase;
     try {
       const boarding = passengerData?.boardingStop || trip.origin;
+      const dropoff = passengerData?.dropoffStop || trip.destination;
       const routeStops = trip.route?.stops || trip.route?.paradas || [];
-      if (boarding && Array.isArray(routeStops) && routeStops.length) {
-        const stop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
-        if (stop && (stop.priceFromOrigin !== undefined && stop.priceFromOrigin !== null)) {
-          // priceFromOrigin representa el precio desde el origen hasta esa parada.
-          // Para calcular el precio desde esa parada hasta el destino, restamos priceFromOrigin del base total.
-          const p = Number(stop.priceFromOrigin) || 0;
-          const adjusted = parsedBase - p;
-          if (adjusted > 0) basePrice = adjusted;
+      
+      
+      if (Array.isArray(routeStops) && routeStops.length) {
+        // Encontrar las paradas de subida y bajada
+        const boardingStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(boarding).toLowerCase());
+        const dropoffStop = routeStops.find(s => String(s.name || s).toLowerCase() === String(dropoff).toLowerCase());
+        
+        
+        // CASO 1: Origen → Parada intermedia
+        // Si subo en el origen y bajo en una parada, el precio es directamente priceFromOrigin de esa parada
+        if (boarding.toLowerCase() === trip.origin.toLowerCase() && dropoffStop?.priceFromOrigin !== undefined) {
+          calculatedPrice = Number(dropoffStop.priceFromOrigin) || 0;
+        }
+        // CASO 2: Parada intermedia → Destino final
+        // Si subo en una parada y bajo en el destino, resto el priceFromOrigin de la parada de subida del precio base
+        else if (boardingStop?.priceFromOrigin !== undefined && dropoff.toLowerCase() === trip.destination.toLowerCase()) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.max(parsedBase - boardingPrice, 0);
+        }
+        // CASO 3: Parada intermedia → Parada intermedia
+        // Si ambas son paradas intermedias, calculo la diferencia entre sus precios
+        else if (boardingStop?.priceFromOrigin !== undefined && dropoffStop?.priceFromOrigin !== undefined) {
+          const boardingPrice = Number(boardingStop.priceFromOrigin) || 0;
+          const dropoffPrice = Number(dropoffStop.priceFromOrigin) || 0;
+          calculatedPrice = Math.abs(dropoffPrice - boardingPrice);
+        }
+        // CASO 4: Origen → Destino (ruta completa)
+        // Usar precio base
+        else {
+          calculatedPrice = parsedBase;
         }
       }
     } catch (e) {
-      // ignore and use parsedBase
+      calculatedPrice = parsedBase;
     }
 
+    // Aplicar multiplicador según tipo de asiento
+    let finalPrice = calculatedPrice;
     switch (String(seatType).toUpperCase()) {
       case 'VIP':
-        return +(basePrice * 1.3);
+        finalPrice = +(calculatedPrice * 1.3);
+        break;
       case 'SEMI_CAMA':
       case 'SEMI-CAMA':
-        return +(basePrice * 1.5);
+        finalPrice = +(calculatedPrice * 1.5);
+        break;
       default:
-        return +basePrice;
+        finalPrice = +calculatedPrice;
     }
+    
+    return finalPrice;
   };
 
   // rows: number of rows; physicalCols: number of physical columns (e.g. 5 with center aisle)
@@ -691,59 +800,168 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="max-w-md mx-auto">
-              {/* Indicador del frente del bus */}
-              <div className="text-center mb-4 text-sm text-muted-foreground">
-                🚗 Frente del bus
-              </div>
-              
-              {/* Mapa de asientos (estilo admin: 5 columnas físicas con pasillo central) */}
-              <div className="flex justify-center">
-                <div className="bg-gray-100 rounded-lg p-4 inline-block">
-                  <div className="mb-4 text-center">
-                    <div className="inline-block bg-gray-800 text-white px-6 py-2 rounded-t-lg font-semibold">
-                      🚗 Frente del bus
-                    </div>
-                  </div>
+            <div className="max-w-4xl mx-auto">
+              {/* Detectar si es bus de dos pisos */}
+              {(() => {
+                const hasTwoFloors = seatMap.seats.some(s => s.floor === 1);
+                const floor0Seats = seatMap.seats.filter(s => s.floor === 0);
+                const floor1Seats = seatMap.seats.filter(s => s.floor === 1);
+                const maxRowFloor0 = floor0Seats.length > 0 ? Math.max(...floor0Seats.map(s => s.row || 0)) + 1 : seatMap.rows;
+                const maxRowFloor1 = floor1Seats.length > 0 ? Math.max(...floor1Seats.map(s => s.row || 0)) + 1 : 0;
 
-                  <div className="space-y-2">
-                    {Array.from({ length: seatMap.rows }).map((_, row) => (
-                      <div key={row} className="flex gap-2 items-center justify-center">
-                        <span className="text-xs text-gray-500 w-4">{row + 1}</span>
-                        {Array.from({ length: seatMap.columns }).map((__, col) => (
-                          <div key={col}>
-                            {col === 2 ? (
-                              <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
-                            ) : (
-                              (() => {
-                                const seat = seatMap.seats.find(s => s.row === row && s.col === col);
-                                if (!seat) return <div className="w-12 h-12" />;
-                                const isSelected = selectedSeat?.number === seat.number;
-                                return (
-                                  <button
-                                    key={seat.number}
-                                    onClick={() => handleSeatSelect(seat)}
-                                    disabled={seat.isOccupied || loading}
-                                    className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
-                                    title={`Asiento ${seat.number}`}
-                                  >
-                                    {getSeatIcon(seat, isSelected)}
-                                    <span className="text-[10px] mt-1">{seat.number}</span>
-                                  </button>
-                                );
-                              })()
-                            )}
+                if (hasTwoFloors) {
+                  // Bus de dos pisos - mostrar ambos pisos
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Piso 1 */}
+                      <div className="flex justify-center">
+                        <div className="bg-blue-50 rounded-lg p-4 inline-block border-2 border-blue-300">
+                          <div className="mb-4 text-center">
+                            <div className="inline-block bg-blue-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                              🚗 Piso 1
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {Array.from({ length: maxRowFloor0 }).map((_, row) => (
+                              <div key={row} className="flex gap-2 items-center justify-center">
+                                <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                                {Array.from({ length: seatMap.columns }).map((__, col) => (
+                                  <div key={col}>
+                                    {col === 2 ? (
+                                      <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                    ) : (
+                                      (() => {
+                                        const seat = floor0Seats.find(s => s.row === row && s.col === col);
+                                        if (!seat) return <div className="w-12 h-12" />;
+                                        const isSelected = selectedSeat?.number === seat.number;
+                                        return (
+                                          <button
+                                            key={seat.number}
+                                            onClick={() => handleSeatSelect(seat)}
+                                            disabled={seat.isOccupied || loading}
+                                            className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                            title={`Asiento ${seat.number}`}
+                                          >
+                                            {getSeatIcon(seat, isSelected)}
+                                            <span className="text-[10px] mt-1">{seat.number}</span>
+                                          </button>
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-4 text-center">
+                            <div className="inline-block bg-blue-300 px-6 py-2 rounded-b-lg text-xs text-blue-900">Puerta trasera</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Piso 2 */}
+                      <div className="flex justify-center">
+                        <div className="bg-purple-50 rounded-lg p-4 inline-block border-2 border-purple-300">
+                          <div className="mb-4 text-center">
+                            <div className="inline-block bg-purple-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                              🚗 Piso 2
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {Array.from({ length: maxRowFloor1 }).map((_, row) => (
+                              <div key={row} className="flex gap-2 items-center justify-center">
+                                <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                                {Array.from({ length: seatMap.columns }).map((__, col) => (
+                                  <div key={col}>
+                                    {col === 2 ? (
+                                      <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                    ) : (
+                                      (() => {
+                                        const seat = floor1Seats.find(s => s.row === row && s.col === col);
+                                        if (!seat) return <div className="w-12 h-12" />;
+                                        const isSelected = selectedSeat?.number === seat.number;
+                                        return (
+                                          <button
+                                            key={seat.number}
+                                            onClick={() => handleSeatSelect(seat)}
+                                            disabled={seat.isOccupied || loading}
+                                            className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                            title={`Asiento ${seat.number}`}
+                                          >
+                                            {getSeatIcon(seat, isSelected)}
+                                            <span className="text-[10px] mt-1">{seat.number}</span>
+                                          </button>
+                                        );
+                                      })()
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-4 text-center">
+                            <div className="inline-block bg-purple-300 px-6 py-2 rounded-b-lg text-xs text-purple-900">Puerta trasera</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Bus de un solo piso
+                return (
+                  <div className="flex justify-center">
+                    <div className="bg-gray-100 rounded-lg p-4 inline-block">
+                      <div className="mb-4 text-center">
+                        <div className="inline-block bg-gray-800 text-white px-6 py-2 rounded-t-lg font-semibold">
+                          🚗 Frente del bus
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {Array.from({ length: seatMap.rows }).map((_, row) => (
+                          <div key={row} className="flex gap-2 items-center justify-center">
+                            <span className="text-xs text-gray-500 w-4">{row + 1}</span>
+                            {Array.from({ length: seatMap.columns }).map((__, col) => (
+                              <div key={col}>
+                                {col === 2 ? (
+                                  <div className="w-12 h-12 flex items-center justify-center text-gray-400 text-xs">| |</div>
+                                ) : (
+                                  (() => {
+                                    const seat = seatMap.seats.find(s => s.row === row && s.col === col);
+                                    if (!seat) return <div className="w-12 h-12" />;
+                                    const isSelected = selectedSeat?.number === seat.number;
+                                    return (
+                                      <button
+                                        key={seat.number}
+                                        onClick={() => handleSeatSelect(seat)}
+                                        disabled={seat.isOccupied || loading}
+                                        className={`w-12 h-12 rounded ${getSeatColor(seat, isSelected)} text-xs font-medium flex flex-col items-center justify-center transition shadow-md`}
+                                        title={`Asiento ${seat.number}`}
+                                      >
+                                        {getSeatIcon(seat, isSelected)}
+                                        <span className="text-[10px] mt-1">{seat.number}</span>
+                                      </button>
+                                    );
+                                  })()
+                                )}
+                              </div>
+                            ))}
                           </div>
                         ))}
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="mt-4 text-center">
-                    <div className="inline-block bg-gray-300 px-6 py-2 rounded-b-lg text-xs text-gray-600">Puerta trasera</div>
+                      <div className="mt-4 text-center">
+                        <div className="inline-block bg-gray-300 px-6 py-2 rounded-b-lg text-xs text-gray-600">Puerta trasera</div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>
@@ -825,18 +1043,65 @@ export default function SeatSelection({ trip, onBack, onBookingComplete }) {
                   value={passengerData.boardingStop}
                   onChange={(e) => setPassengerData(prev => ({ ...prev, boardingStop: e.target.value }))}
                   placeholder="Terminal de origen"
+                  disabled
                 />
               </div>
               
               <div className="space-y-2">
-                <Label>Punto de bajada</Label>
-                <Input
-                  value={passengerData.dropoffStop}
-                  onChange={(e) => setPassengerData(prev => ({ ...prev, dropoffStop: e.target.value }))}
-                  placeholder="Terminal de destino"
-                />
+                <Label>Punto de bajada *</Label>
+                <Select 
+                  value={passengerData.dropoffStop} 
+                  onValueChange={(value) => setPassengerData(prev => ({ ...prev, dropoffStop: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona punto de bajada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Destino final */}
+                    <SelectItem value={trip.destination}>
+                      {trip.destination} (Destino final)
+                    </SelectItem>
+                    
+                    {/* Paradas intermedias */}
+                    {(trip.route?.stops || trip.route?.paradas || [])
+                      .filter(s => {
+                        const stopName = s.name || s;
+                        // Excluir origen y destino de las paradas
+                        return stopName !== trip.origin && stopName !== trip.destination;
+                      })
+                      .map((stop, i) => {
+                        const stopName = stop.name || stop;
+                        return (
+                          <SelectItem key={i} value={stopName}>
+                            {stopName}
+                          </SelectItem>
+                        );
+                      })
+                    }
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  El precio se ajustará según la parada seleccionada
+                </p>
               </div>
             </div>
+
+            {/* Mostrar resumen del precio calculado */}
+            {selectedSeat && (
+              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">Precio del ticket</p>
+                    <p className="text-xs text-blue-700">
+                      Asiento {selectedSeat.number} ({String(selectedSeat.type || 'NORMAL').replace(/_/g, ' ')}) • {passengerData.boardingStop} → {passengerData.dropoffStop}
+                    </p>
+                  </div>
+                  <p className="text-2xl font-bold text-blue-900">
+                    {formatPrice(getSeatPrice(selectedSeat.type))}
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-4">
               <Button variant="outline" onClick={() => setBookingStep('seats')} disabled={loading}>

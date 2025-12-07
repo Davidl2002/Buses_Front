@@ -25,8 +25,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { busService, busGroupService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import SeatDesigner from '@/components/admin/SeatDesigner';
 import toast from 'react-hot-toast';
+import api from '@/services/api';
 
 const SEAT_TYPES = {
   NORMAL: { label: 'Normal', color: 'bg-blue-100 text-blue-800', premium: 0 },
@@ -38,6 +40,7 @@ export default function BusesManagement() {
   const [buses, setBuses] = useState([]);
   const [allBuses, setAllBuses] = useState([]);
   const [busGroups, setBusGroups] = useState([]);
+  const [cooperativas, setCooperativas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [activeCard, setActiveCard] = useState('ALL');
@@ -60,8 +63,10 @@ export default function BusesManagement() {
     hasBathroom: false,
     hasTV: false,
     status: 'ACTIVE',
-    busGroupId: ''
+    busGroupId: '',
+    cooperativaId: ''
   });
+  const coopId = useActiveCooperativaId();
 
   const [seatLayout, setSeatLayout] = useState({
     rows: 10,
@@ -70,8 +75,14 @@ export default function BusesManagement() {
   });
 
   useEffect(() => {
-    loadAllBuses();
-    loadData();
+    // Cargar cooperativas si es SUPER_ADMIN
+    if (user?.role === 'SUPER_ADMIN') {
+      loadCooperativas();
+    }
+    if (coopId || user?.cooperativaId) {
+      loadAllBuses();
+      loadData();
+    }
     // Inicializar layout de asientos por defecto
     if (seatLayout.seats.length === 0) {
       const defaultSeats = generateSeatsMatrix(10, 4, 40);
@@ -81,13 +92,24 @@ export default function BusesManagement() {
         seats: defaultSeats
       });
     }
-  }, []);
+  }, [coopId]);
+
+  const loadCooperativas = async () => {
+    try {
+      const response = await api.get('/cooperativas');
+      const coops = response.data?.data || response.data || [];
+      setCooperativas(Array.isArray(coops) ? coops : []);
+    } catch (error) {
+      console.error('Error loading cooperativas:', error);
+      toast.error('Error al cargar cooperativas');
+    }
+  };
 
   // Cargar lista completa para contadores independientes
   const loadAllBuses = async () => {
     try {
       const params = {};
-      if (user?.cooperativaId) params.cooperativaId = user.cooperativaId;
+      if (coopId) params.cooperativaId = coopId;
       const res = await busService.getAll(params);
       const data = res.data?.data || res.data || [];
       setAllBuses(Array.isArray(data) ? data : []);
@@ -101,14 +123,25 @@ export default function BusesManagement() {
     try {
       // Si el usuario tiene cooperativaId, solicitar solo los buses de esa cooperativa
       const params = {};
-      if (user?.cooperativaId) params.cooperativaId = user.cooperativaId;
+      if (coopId) params.cooperativaId = coopId;
       const busesResponse = await busService.getAll(params);
       setBuses(busesResponse.data.data);
       
       // Intentar cargar grupos de buses (opcional)
       try {
-        const groupsResponse = await busGroupService.getAll();
-        setBusGroups(groupsResponse.data.data || []);
+        const groupsResponse = await busGroupService.getAll(params);
+        let groupsData = groupsResponse.data.data || [];
+        
+        // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+        if (user?.role === 'SUPER_ADMIN' && coopId) {
+          groupsData = groupsData.filter(bg => {
+            const bgCoopId = bg.cooperativaId || bg.cooperativa?._id || bg.cooperativa?.id;
+            return bgCoopId === coopId;
+          });
+          console.log('✅ Grupos filtrados:', groupsData.length, 'registros');
+        }
+        
+        setBusGroups(groupsData);
       } catch (groupError) {
         console.log('Bus groups not available, continuing without them');
         setBusGroups([]);
@@ -162,10 +195,10 @@ export default function BusesManagement() {
         toast.error('Debe configurar el diseño de asientos');
         return;
       }
-      // Validar que coincida con totalSeats y mínimo 20
+      // Validar que coincida con totalSeats y mínimo 30
       const expected = parseInt(formData.totalSeats);
-      if (isNaN(expected) || expected < 20) {
-        toast.error('El total de asientos debe ser al menos 20');
+      if (isNaN(expected) || expected < 30) {
+        toast.error('El total de asientos debe ser al menos 30');
         return;
       }
       if (layoutCount !== expected) {
@@ -173,21 +206,24 @@ export default function BusesManagement() {
         return;
       }
 
+      // Combinar piso1 y piso2 en un solo array seats, asegurando que floor esté definido
       let seatLayoutData;
       if (seatLayout.piso1 || seatLayout.piso2) {
+        const piso1WithFloor = (seatLayout.piso1 || []).map(s => ({ ...s, floor: s.floor ?? 0 }));
+        const piso2WithFloor = (seatLayout.piso2 || []).map(s => ({ ...s, floor: s.floor ?? 1 }));
         seatLayoutData = {
           rows: seatLayout.rows,
           columns: seatLayout.columns,
-          piso1: seatLayout.piso1 || [],
-          piso2: seatLayout.piso2 || [],
+          seats: [...piso1WithFloor, ...piso2WithFloor]
         };
       } else {
         seatLayoutData = {
           rows: seatLayout.rows,
           columns: seatLayout.columns,
-          seats: seatLayout.seats
+          seats: (seatLayout.seats || []).map(s => ({ ...s, floor: s.floor ?? 0 }))
         };
       }
+      
       const busData = {
         placa: formData.placa.trim(),
         marca: formData.marca.trim(),
@@ -195,8 +231,8 @@ export default function BusesManagement() {
         year: parseInt(formData.year),
         chasis: formData.chasis.trim(),
         numeroInterno: formData.numeroInterno.trim(),
-        totalSeats: seatLayoutData.piso1 ? (seatLayoutData.piso1.length + seatLayoutData.piso2.length) : seatLayoutData.seats.length,
-        cooperativaId: user.cooperativaId,
+        totalSeats: seatLayoutData.seats.length,
+        cooperativaId: formData.cooperativaId || coopId || user.cooperativaId,
         hasAC: formData.hasAC,
         hasWifi: formData.hasWifi,
         hasBathroom: formData.hasBathroom,
@@ -250,7 +286,8 @@ export default function BusesManagement() {
         hasBathroom: full.hasBathroom || false,
         hasTV: full.hasTV || false,
         status: full.status,
-        busGroupId: full.busGroupId || 'none'
+        busGroupId: full.busGroupId || 'none',
+        cooperativaId: full.cooperativaId || full.cooperativa?._id || full.cooperativa?.id || coopId || ''
       });
 
       if (full.seatLayout) {
@@ -258,24 +295,75 @@ export default function BusesManagement() {
         const sl = full.seatLayout;
         const columns = sl.columns || 5;
         let rows = sl.rows;
-        let seats = [];
+        let allSeats = [];
 
+        // Combinar piso1 y piso2 si existen, o usar seats directamente
         if (sl.piso1 || sl.piso2) {
           const piso1 = (sl.piso1 || []).map(s => ({ ...s, floor: 0 }));
           const piso2 = (sl.piso2 || []).map(s => ({ ...s, floor: 1 }));
-          seats = [...piso1, ...piso2];
-          rows = rows || Math.ceil((seats.length / (columns - 1)));
+          allSeats = [...piso1, ...piso2];
         } else if (sl.seats) {
-          seats = sl.seats.map(s => ({ ...s, floor: s.floor || 0 }));
-          rows = rows || Math.ceil((seats.length / (columns - 1)));
+          allSeats = sl.seats.map(s => ({ ...s, floor: s.floor ?? 0 }));
+        }
+
+        // **DETECCIÓN AUTOMÁTICA DE DOS PISOS**
+        // Si hay asientos sin floor definido pero hay números duplicados en misma posición,
+        // inferir que es de dos pisos
+        if (allSeats.length > 0 && !allSeats.some(s => s.floor === 1)) {
+          // Buscar números duplicados con misma row/col
+          const positionMap = new Map();
+          allSeats.forEach(seat => {
+            const key = `${seat.row}-${seat.col}`;
+            if (!positionMap.has(key)) {
+              positionMap.set(key, []);
+            }
+            positionMap.get(key).push(seat);
+          });
+          
+          // Si hay posiciones con múltiples asientos, es de dos pisos
+          const hasDuplicates = Array.from(positionMap.values()).some(seats => seats.length > 1);
+          
+          if (hasDuplicates) {
+            // Asignar floor basándose en el orden: primeros serán piso 0, segundos piso 1
+            const floorAssigned = new Map();
+            allSeats = allSeats.map(seat => {
+              const key = `${seat.row}-${seat.col}`;
+              const currentCount = floorAssigned.get(key) || 0;
+              floorAssigned.set(key, currentCount + 1);
+              return { ...seat, floor: currentCount };
+            });
+          }
         }
 
         // Asegurar numeración y propiedades mínimas
-        seats = seats.map((s, i) => ({ number: s.number || i + 1, row: s.row ?? Math.floor(i / (columns - 1)), col: s.col ?? (i % (columns - 1)), floor: s.floor ?? 0, type: s.type || 'NORMAL', isAvailable: s.isAvailable ?? true }));
+        allSeats = allSeats.map((s, i) => ({ 
+          number: s.number || i + 1, 
+          row: s.row ?? Math.floor(i / (columns - 1)), 
+          col: s.col ?? (i % (columns - 1)), 
+          floor: s.floor ?? 0, 
+          type: s.type || 'NORMAL', 
+          isAvailable: s.isAvailable ?? true 
+        }));
 
-        setSeatLayout({ rows: rows || 10, columns, seats, totalSeats: full.totalSeats });
-        // guardar también en formData para persistencia en modal
-        setFormData(prev => ({ ...prev, seatLayout: { rows: rows || 10, columns, seats, totalSeats: full.totalSeats } }));
+        // Detectar si es de dos pisos
+        const hasTwoFloors = allSeats.some(s => s.floor === 1);
+        
+        if (hasTwoFloors) {
+          // Separar en piso1 y piso2 para el SeatDesigner
+          const piso1 = allSeats.filter(s => s.floor === 0);
+          const piso2 = allSeats.filter(s => s.floor === 1);
+          rows = rows || Math.max(
+            Math.ceil(piso1.length / (columns - 1)),
+            Math.ceil(piso2.length / (columns - 1))
+          );
+          setSeatLayout({ rows, columns, piso1, piso2, totalSeats: full.totalSeats });
+          setFormData(prev => ({ ...prev, seatLayout: { rows, columns, piso1, piso2, totalSeats: full.totalSeats } }));
+        } else {
+          // Un solo piso
+          rows = rows || Math.ceil(allSeats.length / (columns - 1));
+          setSeatLayout({ rows, columns, seats: allSeats, totalSeats: full.totalSeats });
+          setFormData(prev => ({ ...prev, seatLayout: { rows, columns, seats: allSeats, totalSeats: full.totalSeats } }));
+        }
       } else {
         // Generar layout por defecto
         const seats = generateSeatsMatrix(10, 4, full.totalSeats);
@@ -304,7 +392,8 @@ export default function BusesManagement() {
         hasBathroom: bus.hasBathroom || false,
         hasTV: bus.hasTV || false,
         status: bus.status,
-        busGroupId: bus.busGroupId || 'none'
+        busGroupId: bus.busGroupId || 'none',
+        cooperativaId: bus.cooperativaId || bus.cooperativa?._id || bus.cooperativa?.id || coopId || ''
       });
       setShowForm(true);
     }
@@ -340,7 +429,8 @@ export default function BusesManagement() {
       hasBathroom: false,
       hasTV: false,
       status: 'ACTIVE',
-      busGroupId: 'none'
+      busGroupId: 'none',
+      cooperativaId: coopId || user?.cooperativaId || ''
     });
     
     // Regenerar layout de asientos por defecto
@@ -387,21 +477,67 @@ export default function BusesManagement() {
         const sl = full.seatLayout;
         const columns = sl.columns || 5;
         let rows = sl.rows;
-        let seats = [];
+        let allSeats = [];
 
+        // Combinar piso1 y piso2 si existen, o usar seats directamente
         if (sl.piso1 || sl.piso2) {
           const piso1 = (sl.piso1 || []).map(s => ({ ...s, floor: 0 }));
           const piso2 = (sl.piso2 || []).map(s => ({ ...s, floor: 1 }));
-          seats = [...piso1, ...piso2];
-          rows = rows || Math.ceil((seats.length / (columns - 1)));
+          allSeats = [...piso1, ...piso2];
         } else if (sl.seats) {
-          seats = sl.seats.map(s => ({ ...s, floor: s.floor || 0 }));
-          rows = rows || Math.ceil((seats.length / (columns - 1)));
+          allSeats = sl.seats.map(s => ({ ...s, floor: s.floor ?? 0 }));
         }
 
-        seats = seats.map((s, i) => ({ number: s.number || i + 1, row: s.row ?? Math.floor(i / (columns - 1)), col: s.col ?? (i % (columns - 1)), floor: s.floor ?? 0, type: s.type || 'NORMAL', isAvailable: s.isAvailable ?? true }));
+        // **DETECCIÓN AUTOMÁTICA DE DOS PISOS** (mismo código que en handleEdit)
+        if (allSeats.length > 0 && !allSeats.some(s => s.floor === 1)) {
+          const positionMap = new Map();
+          allSeats.forEach(seat => {
+            const key = `${seat.row}-${seat.col}`;
+            if (!positionMap.has(key)) {
+              positionMap.set(key, []);
+            }
+            positionMap.get(key).push(seat);
+          });
+          
+          const hasDuplicates = Array.from(positionMap.values()).some(seats => seats.length > 1);
+          
+          if (hasDuplicates) {
+            const floorAssigned = new Map();
+            allSeats = allSeats.map(seat => {
+              const key = `${seat.row}-${seat.col}`;
+              const currentCount = floorAssigned.get(key) || 0;
+              floorAssigned.set(key, currentCount + 1);
+              return { ...seat, floor: currentCount };
+            });
+          }
+        }
 
-        setSeatLayout({ rows: rows || 10, columns, seats, totalSeats: full.totalSeats });
+        // Asegurar propiedades mínimas
+        allSeats = allSeats.map((s, i) => ({ 
+          number: s.number || i + 1, 
+          row: s.row ?? Math.floor(i / (columns - 1)), 
+          col: s.col ?? (i % (columns - 1)), 
+          floor: s.floor ?? 0, 
+          type: s.type || 'NORMAL', 
+          isAvailable: s.isAvailable ?? true 
+        }));
+
+        // Detectar si es de dos pisos
+        const hasTwoFloors = allSeats.some(s => s.floor === 1);
+        
+        if (hasTwoFloors) {
+          // Separar en piso1 y piso2 para el SeatDesigner
+          const piso1 = allSeats.filter(s => s.floor === 0);
+          const piso2 = allSeats.filter(s => s.floor === 1);
+          const maxRowFloor0 = piso1.length > 0 ? Math.max(...piso1.map(s => s.row || 0)) + 1 : 0;
+          const maxRowFloor1 = piso2.length > 0 ? Math.max(...piso2.map(s => s.row || 0)) + 1 : 0;
+          rows = Math.max(maxRowFloor0, maxRowFloor1);
+          setSeatLayout({ rows, columns, piso1, piso2, totalSeats: full.totalSeats });
+        } else {
+          // Un solo piso
+          rows = rows || Math.ceil(allSeats.length / (columns - 1));
+          setSeatLayout({ rows, columns, seats: allSeats, totalSeats: full.totalSeats });
+        }
       } else {
         const cols = 5;
         const rowsCalc = Math.ceil((full.totalSeats || 40) / (cols - 1));
@@ -455,6 +591,19 @@ export default function BusesManagement() {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Bus className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar buses, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
       </div>
     );
   }
@@ -710,7 +859,7 @@ export default function BusesManagement() {
                 <Input
                   id="totalSeats"
                   type="number"
-                  min="20"
+                  min="30"
                   max="60"
                   value={formData.totalSeats}
                   onChange={(e) => {
@@ -779,6 +928,30 @@ export default function BusesManagement() {
                   placeholder="9BM3841421B123456"
                 />
               </div>
+              {user?.role === 'SUPER_ADMIN' && (
+                <div>
+                  <Label htmlFor="cooperativaId">Cooperativa *</Label>
+                  <Select 
+                    value={formData.cooperativaId || coopId || ''} 
+                    onValueChange={(value) => setFormData({...formData, cooperativaId: value})}
+                    required
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar cooperativa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cooperativas.filter(c => c.isActive !== false).map((coop) => (
+                        <SelectItem key={coop._id || coop.id} value={coop._id || coop.id}>
+                          {coop.nombre || coop.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
               <div>
                 <Label htmlFor="busGroupId">Grupo de Buses</Label>
                 <Select value={formData.busGroupId} onValueChange={(value) => setFormData({...formData, busGroupId: value})}>

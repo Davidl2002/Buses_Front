@@ -5,8 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import toast from 'react-hot-toast';
-import { MapPin, Calendar, Clock, Users, FileText, CheckCircle } from 'lucide-react';
-import { format } from 'date-fns';
+import { MapPin, Calendar, Clock, Users, FileText, CheckCircle, Play, Flag, AlertCircle } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export default function MyTrips() {
@@ -84,6 +84,36 @@ export default function MyTrips() {
     navigate(`/driver/manifest/${tripId}`);
   };
 
+  const handleChangeStatus = async (tripId, newStatus) => {
+    try {
+      const statusLabels = {
+        IN_PROGRESS: 'en curso',
+        COMPLETED: 'completado',
+        CANCELLED: 'cancelado'
+      };
+
+      const confirmation = confirm(
+        `¿Estás seguro de marcar este viaje como ${statusLabels[newStatus]}?`
+      );
+
+      if (!confirmation) return;
+
+      await tripService.updateStatus(tripId, { status: newStatus });
+      toast.success(`Viaje marcado como ${statusLabels[newStatus]}`);
+      fetchMyTrips(); // Recargar la lista
+    } catch (error) {
+      console.error('Error al cambiar estado del viaje:', error);
+      toast.error(
+        error.response?.data?.message || 
+        'Error al cambiar el estado del viaje'
+      );
+    }
+  };
+
+  const handleViewDetails = (tripId) => {
+    navigate(`/driver/trips/${tripId}`);
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -98,16 +128,16 @@ export default function MyTrips() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Mis Viajes</h1>
-        <p className="text-muted-foreground">
+    <div className="container mx-auto px-3 md:px-4 py-4 md:py-8">
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-2xl md:text-3xl font-bold mb-2">Mis Viajes</h1>
+        <p className="text-sm md:text-base text-muted-foreground">
           Gestiona tus viajes asignados y accede a los manifiestos
         </p>
       </div>
 
       {/* Filtros */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-4 md:mb-6">
         <Button
           variant={filter === 'all' ? 'default' : 'outline'}
           onClick={() => setFilter('all')}
@@ -152,7 +182,7 @@ export default function MyTrips() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 md:gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {trips.map((trip) => (
             <Card key={trip.id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
@@ -175,9 +205,9 @@ export default function MyTrips() {
                     <Calendar className="h-4 w-4 text-muted-foreground" />
                     <span>
                       {trip.date 
-                        ? format(new Date(trip.date), "dd 'de' MMMM, yyyy", { locale: es })
+                        ? format(parseISO(trip.date.split('T')[0]), "dd 'de' MMMM, yyyy", { locale: es })
                         : trip.departureDate 
-                        ? format(new Date(trip.departureDate), "dd 'de' MMMM, yyyy", { locale: es })
+                        ? format(parseISO(trip.departureDate.split('T')[0]), "dd 'de' MMMM, yyyy", { locale: es })
                         : 'Fecha no disponible'
                       }
                     </span>
@@ -205,24 +235,75 @@ export default function MyTrips() {
                     </span>
                   </div>
 
-                  {/* Botón de acción */}
-                  <Button
-                    className="w-full mt-4"
-                    onClick={() => handleViewManifest(trip.id)}
-                    disabled={trip.status === 'CANCELLED'}
-                  >
-                    {trip.status === 'COMPLETED' ? (
-                      <>
-                        <CheckCircle className="h-4 w-4 mr-2" />
-                        Ver Resumen
-                      </>
-                    ) : (
-                      <>
+                  {/* Botones de acción */}
+                  <div className="space-y-2 mt-4">
+                    {/* Botón principal según el estado */}
+                    <div className="flex gap-2">
+                      {trip.status === 'SCHEDULED' && (
+                        <Button
+                          className="flex-1"
+                          onClick={() => handleChangeStatus(trip.id, 'IN_PROGRESS')}
+                          variant="default"
+                        >
+                          <Play className="h-4 w-4 mr-2" />
+                          Iniciar Viaje
+                        </Button>
+                      )}
+
+                      {trip.status === 'IN_PROGRESS' && (
+                        <Button
+                          className="flex-1"
+                          onClick={() => handleChangeStatus(trip.id, 'COMPLETED')}
+                          variant="default"
+                        >
+                          <Flag className="h-4 w-4 mr-2" />
+                          Finalizar
+                        </Button>
+                      )}
+
+                      {trip.status === 'COMPLETED' && (
+                        <Button
+                          className="flex-1"
+                          onClick={() => handleViewDetails(trip.id)}
+                          variant="outline"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Ver Resumen
+                        </Button>
+                      )}
+
+                      {/* Botón ver manifiesto (siempre disponible excepto cancelados) */}
+                      {trip.status !== 'CANCELLED' && (
+                        <Button
+                          className="flex-1"
+                          onClick={() => handleViewManifest(trip.id)}
+                          variant="outline"
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Manifiesto
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Botón Ver Detalle / Registrar Gastos - Solo para viajes activos */}
+                    {(trip.status === 'SCHEDULED' || trip.status === 'IN_PROGRESS') && (
+                      <Button
+                        className="w-full"
+                        onClick={() => handleViewDetails(trip.id)}
+                        variant="secondary"
+                      >
                         <FileText className="h-4 w-4 mr-2" />
-                        Ver Manifiesto
-                      </>
+                        Ver Detalle y Registrar Gastos
+                      </Button>
                     )}
-                  </Button>
+
+                    {trip.status === 'CANCELLED' && (
+                      <Button className="w-full" disabled variant="outline">
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                        Cancelado
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

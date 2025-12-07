@@ -24,7 +24,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 // Tabs removed: we show a single filtered table below instead of tabbed views
 import { staffService } from '@/services';
+import api from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import toast from 'react-hot-toast';
 
 const STAFF_ROLES = [
@@ -37,6 +39,7 @@ const LICENSE_TYPES = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 export default function StaffManagement() {
   const [staff, setStaff] = useState([]);
   const [allStaff, setAllStaff] = useState([]);
+  const [cooperativas, setCooperativas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
@@ -51,6 +54,7 @@ export default function StaffManagement() {
     phone: '',
     cedula: '',
     role: '',
+    cooperativaId: '',
     licenseNumber: '',
     licenseType: '',
     licenseExpiryDate: '',
@@ -63,6 +67,7 @@ export default function StaffManagement() {
   });
   
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
 
   // Helper para normalizar fechas para input[type=date] (tomar primeros 10 chars si viene ISO)
   const toDateInputValue = (d) => {
@@ -80,23 +85,51 @@ export default function StaffManagement() {
   };
 
   useEffect(() => {
+    // Cargar cooperativas si es SUPER_ADMIN
+    if (user?.role === 'SUPER_ADMIN') {
+      loadCooperativas();
+    }
     // Cargar staff con filtro inicial (si existe) y lista completa para contadores
-    const paramRole = filterRole === 'ALL' ? undefined : (filterRole === 'CHOFER' ? 'DRIVER' : filterRole);
-    loadAllStaff();
-    loadStaff({ role: paramRole });
+    if (coopId || user?.cooperativaId) {
+      const paramRole = filterRole === 'ALL' ? undefined : (filterRole === 'CHOFER' ? 'DRIVER' : filterRole);
+      loadAllStaff();
+      loadStaff({ role: paramRole });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [coopId]);
+
+  const loadCooperativas = async () => {
+    try {
+      const response = await api.get('/cooperativas');
+      const coops = response.data?.data || response.data || [];
+      setCooperativas(Array.isArray(coops) ? coops : []);
+    } catch (error) {
+      console.error('Error loading cooperativas:', error);
+      toast.error('Error al cargar cooperativas');
+    }
+  };
 
   // Cargar lista completa para obtener contadores independientes del filtro
   const loadAllStaff = async () => {
     try {
       const res = await staffService.getAll();
       const staffData = res.data?.data || res.data || [];
-      const normalized = (Array.isArray(staffData) ? staffData : []).map(s => ({
+      let normalized = (Array.isArray(staffData) ? staffData : []).map(s => ({
         ...s,
         role: s.role === 'DRIVER' ? 'CHOFER' : s.role,
         licenseExpiryDate: s.licenseExpiryDate || s.licenseExpiry || undefined
       }));
+      
+      // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+      if (user?.role === 'SUPER_ADMIN' && coopId) {
+        console.log('🔍 StaffManagement - Filtrando personal para cooperativa:', coopId);
+        normalized = normalized.filter(s => {
+          const staffCoopId = s.cooperativaId || s.cooperativa?._id || s.cooperativa?.id;
+          return staffCoopId === coopId;
+        });
+        console.log('✅ Personal filtrado:', normalized.length, 'registros');
+      }
+      
       setAllStaff(normalized);
     } catch (err) {
       console.error('Error loading all staff:', err);
@@ -128,7 +161,7 @@ export default function StaffManagement() {
       // Manejar diferentes estructuras de respuesta
       const staffData = response.data?.data || response.data || [];
       // Normalizar roles que vengan como DRIVER desde el backend
-      const normalized = (Array.isArray(staffData) ? staffData : []).map(s => ({
+      let normalized = (Array.isArray(staffData) ? staffData : []).map(s => ({
         ...s,
         role: s.role === 'DRIVER' ? 'CHOFER' : s.role,
         // map backend date field to UI-friendly name if present
@@ -136,6 +169,14 @@ export default function StaffManagement() {
         hireDate: s.hireDate || s.hireDate
       }));
       console.log('Staff data:', staffData);
+      
+      // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+      if (user?.role === 'SUPER_ADMIN' && coopId) {
+        normalized = normalized.filter(s => {
+          const staffCoopId = s.cooperativaId || s.cooperativa?._id || s.cooperativa?.id;
+          return staffCoopId === coopId;
+        });
+      }
       
       setStaff(normalized);
     } catch (error) {
@@ -154,7 +195,8 @@ export default function StaffManagement() {
     try {
       const staffData = {
         ...formData,
-        cooperativaId: user.cooperativaId
+        // Usar cooperativaId del formulario, o el activo como fallback
+        cooperativaId: formData.cooperativaId || coopId || user.cooperativaId
       };
 
       // Convertir tipos numéricos para CHOFER
@@ -279,6 +321,7 @@ export default function StaffManagement() {
       phone: staffMember.phone || '',
       cedula: staffMember.cedula || '',
       role: staffMember.role || '',
+      cooperativaId: staffMember.cooperativaId || staffMember.cooperativa?._id || staffMember.cooperativa?.id || '',
       licenseNumber: staffMember.licenseNumber || '',
       licenseType: staffMember.licenseType || '',
       licenseExpiryDate: toDateInputValue(staffMember.licenseExpiryDate || staffMember.licenseExpiry || ''),
@@ -318,6 +361,7 @@ export default function StaffManagement() {
       phone: '',
       cedula: '',
       role: '',
+      cooperativaId: coopId || user?.cooperativaId || '',
       licenseNumber: '',
       licenseType: '',
       licenseExpiryDate: '',
@@ -383,6 +427,19 @@ export default function StaffManagement() {
     );
   }
 
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Users className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar personal, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -410,7 +467,10 @@ export default function StaffManagement() {
               </Button>
             </div>
 
-            <Button onClick={() => setShowForm(true)} className="flex items-center gap-2">
+            <Button onClick={() => {
+              resetForm();
+              setShowForm(true);
+            }} className="flex items-center gap-2">
               <Plus className="h-4 w-4" />
               Agregar Personal
             </Button>
@@ -701,6 +761,29 @@ export default function StaffManagement() {
                   </Select>
                 </div>
               </div>
+
+              {/* Selector de Cooperativa (solo para SUPER_ADMIN) */}
+              {user?.role === 'SUPER_ADMIN' && (
+                <div>
+                  <Label htmlFor="cooperativaId">Cooperativa *</Label>
+                  <Select 
+                    value={formData.cooperativaId} 
+                    onValueChange={(value) => setFormData({...formData, cooperativaId: value})}
+                    required
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar cooperativa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cooperativas.filter(c => c.isActive !== false).map((coop) => (
+                        <SelectItem key={coop._id || coop.id} value={coop._id || coop.id}>
+                          {coop.nombre || coop.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             {/* Información de Contacto */}

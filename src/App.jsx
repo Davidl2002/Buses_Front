@@ -16,6 +16,12 @@ import PaypalRedirect from '@/pages/PaypalRedirect';
 import AdminLayout from '@/components/admin/AdminLayout';
 import MyTrips from '@/pages/driver/MyTrips';
 import DriverManifest from '@/pages/driver/Manifest';
+import TripDetail from '@/pages/driver/TripDetail';
+import MyExpenses from '@/pages/driver/MyExpenses';
+import OficinistaDashboard from '@/pages/oficinista/Dashboard';
+import MisVentas from '@/pages/oficinista/MisVentas';
+import VenderTicket from '@/pages/oficinista/VenderTicket';
+import OficinistaConfiguracion from '@/pages/oficinista/Configuracion';
 
 function App() {
   return (
@@ -77,10 +83,76 @@ function App() {
                       }
                     />
                     <Route
+                      path="/driver/trips/:tripId"
+                      element={
+                        <ProtectedRoute allowedRoles={['CHOFER']}>
+                          <TripDetail />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/driver/manifest/:tripId"
                       element={
                         <ProtectedRoute allowedRoles={['CHOFER']}>
                           <DriverManifest />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/driver/expenses"
+                      element={
+                        <ProtectedRoute allowedRoles={['CHOFER']}>
+                          <MyExpenses />
+                        </ProtectedRoute>
+                      }
+                    />
+
+                    {/* Oficinista Routes */}
+                    <Route
+                      path="/oficinista"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <OficinistaDashboard />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/oficinista/vender-ticket"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <VenderTicket />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/oficinista/mis-ventas"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <MisVentas />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/oficinista/validar-qr"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <DriverManifest />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/oficinista/manifest/:tripId"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <DriverManifest />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/oficinista/configuracion"
+                      element={
+                        <ProtectedRoute allowedRoles={['OFICINISTA']}>
+                          <OficinistaConfiguracion />
                         </ProtectedRoute>
                       }
                     />
@@ -91,7 +163,30 @@ function App() {
             }
           />
         </Routes>
-        <Toaster position="top-right" />
+        <Toaster 
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: '#fff',
+              color: '#363636',
+            },
+            success: {
+              duration: 3000,
+              iconTheme: {
+                primary: '#10b981',
+                secondary: '#fff',
+              },
+            },
+            error: {
+              duration: 4000,
+              iconTheme: {
+                primary: '#ef4444',
+                secondary: '#fff',
+              },
+            },
+          }}
+        />
       </Router>
     </AuthProvider>
   );

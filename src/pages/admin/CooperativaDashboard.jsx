@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import api from '@/services/api';
 import { staffService } from '@/services';
 import {
@@ -22,12 +23,14 @@ import {
   Clock,
   Download,
   FileText,
-  Loader2
+  Loader2,
+  Building2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function CooperativaDashboard() {
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
   const [loading, setLoading] = useState(true);
   const [dashboardData, setDashboardData] = useState(null);
   const [financialReport, setFinancialReport] = useState(null);
@@ -39,16 +42,20 @@ export default function CooperativaDashboard() {
   });
 
   useEffect(() => {
-    // carga inicial y re-carga cuando cambia el rango
-    loadAllData();
+    // carga inicial y re-carga cuando cambia el rango o la cooperativa
+    if (coopId || user?.cooperativaId) {
+      loadAllData();
+    }
 
     // polling cada 30s para KPIs (limpieza en unmount)
     const interval = setInterval(() => {
-      loadAllData();
+      if (coopId || user?.cooperativaId) {
+        loadAllData();
+      }
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [dateRange]);
+  }, [dateRange, coopId]);
 
   const navigate = useNavigate();
 
@@ -81,9 +88,20 @@ export default function CooperativaDashboard() {
   const loadAllData = async () => {
     try {
       setLoading(true);
-      // Incluir cooperativaId del usuario para filtrar la información
+      // Incluir cooperativaId: para SUPER_ADMIN usa la cooperativa seleccionada, para ADMIN usa su cooperativaId
       const qs = { ...dateRange };
-      if (user?.cooperativaId) qs.cooperativaId = user.cooperativaId;
+      if (coopId) {
+        qs.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        qs.cooperativaId = user.cooperativaId;
+      }
+      
+      // Si es SUPER_ADMIN y no hay cooperativa seleccionada, no cargar nada
+      if (user?.role === 'SUPER_ADMIN' && !qs.cooperativaId) {
+        setLoading(false);
+        return;
+      }
+      
       const params = new URLSearchParams(qs).toString();
       // Cache corto en sessionStorage para reducir llamadas repetidas
       const cacheKey = `dashboardCache:${params}`;
@@ -145,7 +163,7 @@ export default function CooperativaDashboard() {
         const needsFallback = !personalCounts || personalCounts.total === undefined || personalCounts.total === 0;
         if (needsFallback) {
           try {
-            const staffRes = await staffService.getAll({ cooperativaId: user?.cooperativaId });
+            const staffRes = await staffService.getAll({ cooperativaId: qs.cooperativaId });
             const staffList = staffRes.data?.data || staffRes.data || [];
             const normalized = Array.isArray(staffList) ? staffList : [];
             const choferes = normalized.filter(s => (s.role === 'DRIVER' || s.role === 'CHOFER')).length;
@@ -191,8 +209,18 @@ export default function CooperativaDashboard() {
 
   const handlePaymentAction = async (ticketId, action, reason = '') => {
     try {
+      // Construir URL con cooperativaId como query param si es SUPER_ADMIN
+      const queryParams = {};
+      if (coopId) {
+        queryParams.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        queryParams.cooperativaId = user.cooperativaId;
+      }
+      const queryString = new URLSearchParams(queryParams).toString();
+      const url = `/dashboard/payment/${ticketId}${queryString ? '?' + queryString : ''}`;
+      
       // API espera { action: 'approve'|'reject', reason?: string }
-      await api.put(`/dashboard/payment/${ticketId}`, {
+      await api.put(url, {
         action: action === 'APPROVE' || action === 'APPROVED' || action === 'approve' ? 'approve' : 'reject',
         reason: reason || undefined
       });
@@ -200,7 +228,11 @@ export default function CooperativaDashboard() {
       alert(`Pago ${action === 'APPROVE' || action === 'APPROVED' ? 'aprobado' : 'rechazado'} exitosamente`);
       // invalidar cache para forzar recarga
       const qs = { ...dateRange };
-      if (user?.cooperativaId) qs.cooperativaId = user.cooperativaId;
+      if (coopId) {
+        qs.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        qs.cooperativaId = user.cooperativaId;
+      }
       const params = new URLSearchParams(qs).toString();
       sessionStorage.removeItem(`dashboardCache:${params}`);
       loadAllData();
@@ -254,6 +286,19 @@ export default function CooperativaDashboard() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Building2 className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para ver el dashboard de cooperativa, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
       </div>
     );
   }

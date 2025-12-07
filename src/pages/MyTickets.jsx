@@ -21,7 +21,22 @@ export default function MyTickets() {
   const loadTickets = async () => {
     try {
       const response = await ticketService.getMyTickets();
-      setTickets(response.data.data);
+      const ticketsList = response.data.data;
+      
+      // Cargar detalles completos de cada ticket usando GET /api/tickets/:id
+      const detailedTickets = await Promise.all(
+        ticketsList.map(async (ticket) => {
+          try {
+            const detailResponse = await ticketService.getById(ticket.id);
+            return detailResponse.data.data || ticket;
+          } catch (error) {
+            console.error(`Error loading ticket ${ticket.id}:`, error);
+            return ticket; // Fallback al ticket básico
+          }
+        })
+      );
+      
+      setTickets(detailedTickets);
     } catch (error) {
       toast.error('Error al cargar los tickets');
       console.error(error);
@@ -72,10 +87,10 @@ export default function MyTickets() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Mis Tickets</h1>
-        <p className="text-gray-600">Gestiona tus boletos de viaje</p>
+    <div className="container mx-auto px-3 md:px-4 py-4 md:py-8">
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-2xl md:text-3xl font-bold mb-2">Mis Tickets</h1>
+        <p className="text-sm md:text-base text-gray-600">Gestiona tus boletos de viaje</p>
       </div>
 
       {tickets.length === 0 ? (
@@ -92,11 +107,11 @@ export default function MyTickets() {
         <div className="grid gap-6">
           {tickets.map((ticket) => (
             <Card key={ticket.id} className="hover:shadow-lg transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <CardContent className="p-4 md:p-6">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-3">
-                      <h3 className="font-semibold text-xl">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <h3 className="font-semibold text-lg md:text-xl">
                         {ticket.trip?.route?.name}
                       </h3>
                       {getStatusBadge(ticket.status)}
@@ -108,16 +123,16 @@ export default function MyTickets() {
                         <span>
                           {(() => {
                             const raw = ticket.trip?.departureDate;
-                            let d = null;
                             if (!raw) return 'Fecha no disponible';
                             try {
-                              // try ISO parse first
-                              d = typeof raw === 'string' ? parseISO(raw) : new Date(raw);
+                              // Extraer solo la fecha sin hora para evitar problemas de zona horaria
+                              const dateOnly = String(raw).split('T')[0];
+                              const d = parseISO(dateOnly);
+                              if (!isValid(d)) return 'Fecha no disponible';
+                              return `${format(d, 'PPP', { locale: es })} • ${ticket.trip?.departureTime || ''}`;
                             } catch (e) {
-                              d = new Date(raw);
+                              return 'Fecha no disponible';
                             }
-                            if (!isValid(d)) return 'Fecha no disponible';
-                            return `${format(d, 'PPP', { locale: es })} • ${ticket.trip?.departureTime || ''}`;
                           })()}
                         </span>
                       </div>
@@ -133,17 +148,32 @@ export default function MyTickets() {
                         <span className="text-gray-600">Pasajero: </span>
                         <span className="font-semibold">{ticket.passengerName}</span>
                       </div>
+                      <div className="col-span-1 md:col-span-2">
+                        <span className="text-gray-600">Comprado: </span>
+                        <span className="font-semibold">
+                          {(() => {
+                            try {
+                              const d = parseISO(ticket.createdAt);
+                              if (!isValid(d)) return 'Fecha no disponible';
+                              return format(d, "PPP 'a las' HH:mm", { locale: es });
+                            } catch (e) {
+                              return 'Fecha no disponible';
+                            }
+                          })()}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-3 text-lg font-bold text-primary">
-                      ${Number(ticket.price || 0).toFixed(2)}
+                      ${Number(ticket.totalPrice || ticket.price || 0).toFixed(2)}
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 shrink-0">
                     <Button
                       onClick={() => setSelectedTicket(ticket)}
                       variant="outline"
+                      className="w-full md:w-auto"
                     >
                       <Download className="mr-2 h-4 w-4" />
                       Ver QR
@@ -152,6 +182,7 @@ export default function MyTickets() {
                       <Button
                         onClick={() => handleCancelTicket(ticket.id)}
                         variant="destructive"
+                        className="w-full md:w-auto"
                       >
                         <X className="mr-2 h-4 w-4" />
                         Cancelar

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { adminDashboardService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -47,11 +48,14 @@ export default function AdminDashboard() {
   const [pendingPayments, setPendingPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
   const navigate = useNavigate();
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (coopId || user?.cooperativaId) {
+      loadDashboardData();
+    }
+  }, [coopId]);
 
   const loadDashboardData = async () => {
     try {
@@ -59,12 +63,28 @@ export default function AdminDashboard() {
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
       const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
+      // Construir params con cooperativaId
+      const params = {
+        startDate: startOfMonth.toISOString().split('T')[0],
+        endDate: endOfMonth.toISOString().split('T')[0]
+      };
+
+      // Agregar cooperativaId: para SUPER_ADMIN usa la seleccionada, para ADMIN usa la asignada
+      if (coopId) {
+        params.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        params.cooperativaId = user.cooperativaId;
+      }
+
+      // Si es SUPER_ADMIN y no hay cooperativa seleccionada, no cargar datos
+      if (user?.role === 'SUPER_ADMIN' && !params.cooperativaId) {
+        setLoading(false);
+        return;
+      }
+
       const [dashboardResponse, paymentsResponse] = await Promise.all([
-        adminDashboardService.getDashboard({
-          startDate: startOfMonth.toISOString().split('T')[0],
-          endDate: endOfMonth.toISOString().split('T')[0]
-        }),
-        adminDashboardService.getPendingPayments()
+        adminDashboardService.getDashboard(params),
+        adminDashboardService.getPendingPayments(params)
       ]);
 
       setDashboardData(dashboardResponse.data.data);
@@ -79,7 +99,14 @@ export default function AdminDashboard() {
 
   const handleApprovePayment = async (ticketId) => {
     try {
-      await adminDashboardService.approvePayment(ticketId);
+      const params = {};
+      if (coopId) {
+        params.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        params.cooperativaId = user.cooperativaId;
+      }
+      
+      await adminDashboardService.approvePayment(ticketId, params);
       toast.success('Pago aprobado exitosamente');
       loadDashboardData(); // Recargar datos
     } catch (error) {
@@ -93,7 +120,14 @@ export default function AdminDashboard() {
     if (!reason) return;
 
     try {
-      await adminDashboardService.rejectPayment(ticketId, reason);
+      const params = {};
+      if (coopId) {
+        params.cooperativaId = coopId;
+      } else if (user?.cooperativaId) {
+        params.cooperativaId = user.cooperativaId;
+      }
+      
+      await adminDashboardService.rejectPayment(ticketId, reason, params);
       toast.success('Pago rechazado');
       loadDashboardData(); // Recargar datos
     } catch (error) {
@@ -106,6 +140,19 @@ export default function AdminDashboard() {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <BarChart3 className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para ver el dashboard, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
       </div>
     );
   }

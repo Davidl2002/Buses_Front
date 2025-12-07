@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:serve": "vitepress preview docs/.vitepress/dist"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.0.4",
@@ -24,6 +27,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.0.0",
     "date-fns": "^3.0.0",
+    "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.294.0",
     "qrcode.react": "^3.1.0",
     "react": "^18.2.0",
@@ -44,6 +48,7 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "tailwindcss-animate": "^1.0.7",
-    "vite": "^5.0.8"
+    "vite": "^5.0.8",
+    "vitepress": "^1.0.0"
   }
 }

@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { routeService, frequencyService, busGroupService, tripService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
+import useActiveCooperativaId from '@/hooks/useActiveCooperativaId';
 import toast from 'react-hot-toast';
 import api from '@/services/api';
 
@@ -53,6 +54,7 @@ export default function RoutesManagement() {
   const [frequencies, setFrequencies] = useState([]);
   const [busGroups, setBusGroups] = useState([]);
   const [cities, setCities] = useState([]);
+  const [cooperativas, setCooperativas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('routes');
   
@@ -67,7 +69,13 @@ export default function RoutesManagement() {
     basePrice: '',
     estimatedDuration: '',
     distanceKm: '',
-    stops: []
+    cooperativaId: '',
+    stops: [],
+    // Datos de frecuencia integrados
+    departureTime: '',
+    operatingDays: [],
+    antPermitNumber: '',
+    busGroupId: ''
   });
   
   // Estados para frecuencias
@@ -79,7 +87,8 @@ export default function RoutesManagement() {
     departureTime: '',
     operatingDays: [],
     antPermitNumber: '',
-    busGroupId: ''
+    busGroupId: '',
+    cooperativaId: ''
   });
 
   // Generación y detalles de frecuencias
@@ -87,6 +96,7 @@ export default function RoutesManagement() {
   const [generateParams, setGenerateParams] = useState({ startDate: '', endDate: '', frequencyIds: [] });
   const [genBusGroupId, setGenBusGroupId] = useState('');
   const [genGroupMax, setGenGroupMax] = useState(null);
+  const [limitFrequenciesToBuses, setLimitFrequenciesToBuses] = useState(false); // Control para limitar frecuencias
   const [generateResult, setGenerateResult] = useState(null);
   const [showFrequencyDetails, setShowFrequencyDetails] = useState(false);
   const [frequencyDetails, setFrequencyDetails] = useState(null);
@@ -94,24 +104,57 @@ export default function RoutesManagement() {
   
   const [newStop, setNewStop] = useState({ name: '', priceFromOrigin: '' });
   const { user } = useAuth();
+  const coopId = useActiveCooperativaId();
 
   useEffect(() => {
-    loadData();
-  }, []);
+    // Cargar cooperativas si es SUPER_ADMIN
+    if (user?.role === 'SUPER_ADMIN') {
+      loadCooperativas();
+    }
+    if (coopId || user?.cooperativaId) {
+      loadData();
+    }
+  }, [coopId]);
+
+  const loadCooperativas = async () => {
+    try {
+      const response = await api.get('/cooperativas');
+      const coops = response.data?.data || response.data || [];
+      setCooperativas(Array.isArray(coops) ? coops : []);
+    } catch (error) {
+      console.error('Error loading cooperativas:', error);
+      toast.error('Error al cargar cooperativas');
+    }
+  };
 
   const loadData = async () => {
     try {
+      // Construir params con cooperativaId
+      const params = {};
+      const targetCoop = coopId || user?.cooperativaId;
+      if (targetCoop) params.cooperativaId = targetCoop;
+      
       // Use allSettled so one failing endpoint doesn't block others (e.g., missing /buses/groups)
       const results = await Promise.allSettled([
-        routeService.getAll(),
-        frequencyService.getAll(),
-        busGroupService.getAll(),
-        api.get('/cities')
+        routeService.getAll(params),
+        frequencyService.getAll(params),
+        busGroupService.getAll(params),
+        api.get('/cities', { params })
       ]);
 
       // routes
       if (results[0].status === 'fulfilled') {
-        setRoutes(results[0].value.data.data);
+        let routesData = results[0].value.data.data || [];
+        
+        // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+        if (user?.role === 'SUPER_ADMIN' && coopId) {
+          routesData = routesData.filter(r => {
+            const routeCoopId = r.cooperativaId || r.cooperativa?._id || r.cooperativa?.id;
+            return routeCoopId === coopId;
+          });
+        }
+        
+        setRoutes(routesData);
       } else {
         console.error('Error loading routes:', results[0].reason);
         toast.error('Error al cargar rutas');
@@ -120,7 +163,17 @@ export default function RoutesManagement() {
 
       // frequencies
       if (results[1].status === 'fulfilled') {
-        setFrequencies(results[1].value.data.data);
+        let frequenciesData = results[1].value.data.data || [];
+        
+        // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+        if (user?.role === 'SUPER_ADMIN' && coopId) {
+          frequenciesData = frequenciesData.filter(f => {
+            const freqCoopId = f.cooperativaId || f.cooperativa?._id || f.cooperativa?.id;
+            return freqCoopId === coopId;
+          });
+        }
+        
+        setFrequencies(frequenciesData);
       } else {
         console.error('Error loading frequencies:', results[1].reason);
         toast.error('Error al cargar frecuencias');
@@ -129,7 +182,17 @@ export default function RoutesManagement() {
 
       // bus groups (optional)
       if (results[2].status === 'fulfilled') {
-        setBusGroups(results[2].value.data.data);
+        let busGroupsData = results[2].value.data.data || [];
+        
+        // Filtrado frontend si es SUPER_ADMIN y hay cooperativa seleccionada
+        if (user?.role === 'SUPER_ADMIN' && coopId) {
+          busGroupsData = busGroupsData.filter(bg => {
+            const bgCoopId = bg.cooperativaId || bg.cooperativa?._id || bg.cooperativa?.id;
+            return bgCoopId === coopId;
+          });
+        }
+        
+        setBusGroups(busGroupsData);
       } else {
         console.warn('Bus groups endpoint failed, continuing without groups:', results[2].reason);
         setBusGroups([]);
@@ -189,26 +252,65 @@ export default function RoutesManagement() {
       }
     }
 
+    // Validar datos de frecuencia si se proporcionan
+    if (routeFormData.departureTime || routeFormData.operatingDays.length > 0) {
+      const timeRe = /^([01]\d|2[0-3]):([0-5]\d)$/;
+      if (!routeFormData.departureTime || !timeRe.test(routeFormData.departureTime)) {
+        toast.error('Hora de salida inválida. Use formato HH:mm');
+        return;
+      }
+      if (routeFormData.operatingDays.length === 0) {
+        toast.error('Debe seleccionar al menos un día de operación para la frecuencia');
+        return;
+      }
+      // busGroupId es opcional, se puede enviar null
+    }
+
     try {
       const routeData = {
-        ...routeFormData,
-        cooperativaId: user.cooperativaId,
+        name: routeFormData.name,
+        origin: routeFormData.origin,
+        destination: routeFormData.destination,
         basePrice: parseFloat(routeFormData.basePrice),
-        estimatedDuration: parseInt(routeFormData.estimatedDuration),
-        distanceKm: parseFloat(routeFormData.distanceKm),
+        estimatedDuration: routeFormData.estimatedDuration ? parseInt(routeFormData.estimatedDuration, 10) : undefined,
+        distanceKm: routeFormData.distanceKm ? parseFloat(routeFormData.distanceKm) : undefined,
         stops: routeFormData.stops.map((stop, index) => ({
-          ...stop,
-          order: index + 1,
-          priceFromOrigin: parseFloat(stop.priceFromOrigin)
-        }))
+          name: stop.name,
+          priceFromOrigin: parseFloat(stop.priceFromOrigin),
+          order: index + 1
+        })),
+        cooperativaId: routeFormData.cooperativaId || coopId || user.cooperativaId
       };
 
+      let savedRoute;
       if (editingRoute) {
         await routeService.update(editingRoute.id, routeData);
         toast.success('Ruta actualizada exitosamente');
+        savedRoute = { ...editingRoute, ...routeData };
       } else {
-        await routeService.create(routeData);
+        const response = await routeService.create(routeData);
+        savedRoute = response.data.data || response.data;
         toast.success('Ruta creada exitosamente');
+      }
+
+      // Si se proporcionaron datos de frecuencia, crear la frecuencia
+      if (!editingRoute && routeFormData.departureTime && routeFormData.operatingDays.length > 0) {
+        try {
+          const frequencyData = {
+            routeId: savedRoute.id || savedRoute._id,
+            departureTime: routeFormData.departureTime,
+            operatingDays: routeFormData.operatingDays,
+            antPermitNumber: routeFormData.antPermitNumber || undefined,
+            busGroupId: routeFormData.busGroupId,
+            cooperativaId: routeFormData.cooperativaId || coopId || user.cooperativaId
+          };
+
+          await frequencyService.create(frequencyData);
+          toast.success('Frecuencia creada exitosamente junto con la ruta');
+        } catch (freqError) {
+          console.error('Error creando frecuencia:', freqError);
+          toast.error('Ruta creada, pero hubo un error al crear la frecuencia. Puedes crearla manualmente.');
+        }
       }
       
       resetRouteForm();
@@ -228,7 +330,13 @@ export default function RoutesManagement() {
       basePrice: route.basePrice.toString(),
       estimatedDuration: route.estimatedDuration?.toString() || '',
       distanceKm: route.distanceKm?.toString() || '',
-      stops: route.stops || []
+      cooperativaId: route.cooperativaId || route.cooperativa?._id || route.cooperativa?.id || '',
+      stops: route.stops || [],
+      // Inicializar campos de frecuencia vacíos
+      departureTime: '',
+      operatingDays: [],
+      antPermitNumber: '',
+      busGroupId: ''
     });
     setShowRouteForm(true);
   };
@@ -256,6 +364,7 @@ export default function RoutesManagement() {
       basePrice: '',
       estimatedDuration: '',
       distanceKm: '',
+      cooperativaId: coopId || user?.cooperativaId || '',
       stops: []
     });
     setNewStop({ name: '', priceFromOrigin: '' });
@@ -309,18 +418,12 @@ export default function RoutesManagement() {
 
       const frequencyData = {
         ...frequencyFormData,
-        cooperativaId: user.cooperativaId
+        cooperativaId: frequencyFormData.cooperativaId || coopId || user.cooperativaId
       };
 
-      // Make bus group required
-      if (!frequencyData.busGroupId) {
-        toast.error('Debe seleccionar un Grupo de Buses (obligatorio)');
-        return;
-      }
-
-      // If busGroupId is 'none' or empty, remove it so backend treats as unassigned
+      // Si busGroupId está vacío o es 'none', enviarlo como null (opcional)
       if (!frequencyData.busGroupId || frequencyData.busGroupId === 'none') {
-        delete frequencyData.busGroupId;
+        frequencyData.busGroupId = null;
       }
 
       if (editingFrequency) {
@@ -397,7 +500,8 @@ export default function RoutesManagement() {
       departureTime: frequency.departureTime,
       operatingDays: frequency.operatingDays || [],
       antPermitNumber: frequency.antPermitNumber || '',
-      busGroupId: frequency.busGroupId || ''
+      busGroupId: frequency.busGroupId || '',
+      cooperativaId: frequency.cooperativaId || frequency.cooperativa?._id || frequency.cooperativa?.id || ''
     });
     setShowFrequencyForm(true);
   };
@@ -423,18 +527,28 @@ export default function RoutesManagement() {
       departureTime: '',
       operatingDays: [],
       antPermitNumber: '',
-      busGroupId: ''
+      busGroupId: '',
+      cooperativaId: coopId || user?.cooperativaId || ''
     });
     setEditingFrequency(null);
     setShowFrequencyForm(false);
   };
 
   const toggleOperatingDay = (day) => {
+    // Para el formulario unificado de ruta (que ahora incluye frecuencia)
+    setRouteFormData(prev => ({
+      ...prev,
+      operatingDays: (prev.operatingDays || []).includes(day)
+        ? (prev.operatingDays || []).filter(d => d !== day)
+        : [...(prev.operatingDays || []), day]
+    }));
+    
+    // Para el formulario separado de frecuencia (por compatibilidad)
     setFrequencyFormData(prev => ({
       ...prev,
-      operatingDays: prev.operatingDays.includes(day)
-        ? prev.operatingDays.filter(d => d !== day)
-        : [...prev.operatingDays, day]
+      operatingDays: (prev.operatingDays || []).includes(day)
+        ? (prev.operatingDays || []).filter(d => d !== day)
+        : [...(prev.operatingDays || []), day]
     }));
   };
 
@@ -456,6 +570,19 @@ export default function RoutesManagement() {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  // Si es superadmin y no ha seleccionado cooperativa, mostrar mensaje
+  if (user?.role === 'SUPER_ADMIN' && !coopId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Route className="h-16 w-16 text-gray-400" />
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900">Selecciona una cooperativa</h3>
+          <p className="text-gray-500 mt-1">Para gestionar rutas, primero selecciona una cooperativa en el menú lateral.</p>
+        </div>
       </div>
     );
   }
@@ -793,6 +920,29 @@ export default function RoutesManagement() {
               </div>
             </div>
 
+            {/* Selector de Cooperativa (solo para SUPER_ADMIN) */}
+            {user?.role === 'SUPER_ADMIN' && (
+              <div>
+                <Label htmlFor="routeCooperativaId">Cooperativa *</Label>
+                <Select 
+                  value={routeFormData.cooperativaId} 
+                  onValueChange={(value) => setRouteFormData({...routeFormData, cooperativaId: value})}
+                  required
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar cooperativa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cooperativas.filter(c => c.isActive !== false).map((coop) => (
+                      <SelectItem key={coop._id || coop.id} value={coop._id || coop.id}>
+                        {coop.nombre || coop.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="origin">Ciudad de Origen *</Label>
@@ -896,6 +1046,72 @@ export default function RoutesManagement() {
               </div>
             </div>
 
+            {/* Sección de Frecuencia (opcional) */}
+            {!editingRoute && (
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-semibold mb-4">Datos de Frecuencia (Opcional)</h3>
+                <p className="text-sm text-gray-600 mb-4">Puedes crear una frecuencia inicial junto con la ruta</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="departureTime">Hora de Salida</Label>
+                    <Input
+                      id="departureTime"
+                      type="time"
+                      value={routeFormData.departureTime || ''}
+                      onChange={(e) => setRouteFormData({...routeFormData, departureTime: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="busGroupId">Grupo de Buses (Opcional)</Label>
+                    <Select 
+                      value={routeFormData.busGroupId || 'none'} 
+                      onValueChange={(value) => setRouteFormData({...routeFormData, busGroupId: value === 'none' ? '' : value})}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Sin asignar" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Sin asignar</SelectItem>
+                        {busGroups.map((group) => (
+                          <SelectItem key={group.id} value={group.id}>
+                            {group.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <Label htmlFor="antPermitNumber">Número de Permiso ANT</Label>
+                  <Input
+                    id="antPermitNumber"
+                    value={routeFormData.antPermitNumber || ''}
+                    onChange={(e) => setRouteFormData({...routeFormData, antPermitNumber: e.target.value})}
+                    placeholder="Ej: ANT-2024-001"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <Label className="text-base font-medium">Días de Operación</Label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                    {OPERATING_DAYS.map((day) => (
+                      <label key={day.value} className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(routeFormData.operatingDays || []).includes(day.value)}
+                          onChange={() => toggleOperatingDay(day.value)}
+                          className="rounded"
+                        />
+                        <span className="text-sm">{day.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-4 border-t">
               <Button type="button" variant="outline" onClick={resetRouteForm}>
                 Cancelar
@@ -924,6 +1140,29 @@ export default function RoutesManagement() {
           </DialogHeader>
           
           <form onSubmit={handleFrequencySubmit} className="space-y-6">
+            {/* Selector de Cooperativa (solo para SUPER_ADMIN) */}
+            {user?.role === 'SUPER_ADMIN' && (
+              <div>
+                <Label htmlFor="frequencyCooperativaId">Cooperativa *</Label>
+                <Select 
+                  value={frequencyFormData.cooperativaId} 
+                  onValueChange={(value) => setFrequencyFormData({...frequencyFormData, cooperativaId: value})}
+                  required
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar cooperativa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cooperativas.filter(c => c.isActive !== false).map((coop) => (
+                      <SelectItem key={coop._id || coop.id} value={coop._id || coop.id}>
+                        {coop.nombre || coop.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="frequencyRoute">Ruta *</Label>
@@ -963,7 +1202,7 @@ export default function RoutesManagement() {
                   <label key={day.value} className="flex items-center space-x-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={frequencyFormData.operatingDays.includes(day.value)}
+                      checked={(frequencyFormData.operatingDays || []).includes(day.value)}
                       onChange={() => toggleOperatingDay(day.value)}
                       className="rounded"
                     />
@@ -984,15 +1223,16 @@ export default function RoutesManagement() {
                 />
               </div>
               <div>
-                <Label htmlFor="frequencyBusGroup">Grupo de Buses *</Label>
+                <Label htmlFor="frequencyBusGroup">Grupo de Buses (Opcional)</Label>
                 <Select 
-                  value={frequencyFormData.busGroupId} 
-                  onValueChange={(value) => setFrequencyFormData({...frequencyFormData, busGroupId: value})}
+                  value={frequencyFormData.busGroupId || 'none'} 
+                  onValueChange={(value) => setFrequencyFormData({...frequencyFormData, busGroupId: value === 'none' ? '' : value})}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar grupo (obligatorio)" />
+                    <SelectValue placeholder="Sin asignar" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="none">Sin asignar</SelectItem>
                     {busGroups.map((group) => (
                       <SelectItem key={group.id} value={group.id}>
                         {group.name}
@@ -1066,15 +1306,34 @@ export default function RoutesManagement() {
                     <option key={group.id} value={group.id}>{group.name} {computeGroupSize(group) ? `— ${computeGroupSize(group)} buses` : ''}</option>
                   ))}
                 </select>
-                {genGroupMax ? (
-                  <div className="text-xs text-gray-500 mt-1">Puedes seleccionar hasta <strong>{genGroupMax}</strong> frecuencias (cantidad de buses en el grupo).</div>
-                ) : null}
+                
+                {/* Switch para limitar frecuencias */}
+                {genGroupMax && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="checkbox"
+                      id="limitFrequencies"
+                      checked={limitFrequenciesToBuses}
+                      onChange={(e) => {
+                        setLimitFrequenciesToBuses(e.target.checked);
+                        // Si se activa el límite, limpiar selección si excede
+                        if (e.target.checked && generateParams.frequencyIds.length > genGroupMax) {
+                          setGenerateParams(prev => ({ ...prev, frequencyIds: [] }));
+                        }
+                      }}
+                      className="rounded"
+                    />
+                    <label htmlFor="limitFrequencies" className="text-sm text-gray-700 cursor-pointer">
+                      Limitar a <strong>{genGroupMax}</strong> frecuencias (número de buses en el grupo)
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className="max-h-40 overflow-auto border rounded p-2 mt-2">
                 {(genBusGroupId ? frequencies.filter(f => String(f.busGroupId) === String(genBusGroupId)) : frequencies).map(f => {
                   const alreadySelected = generateParams.frequencyIds.includes(f.id);
-                  const limitReached = genGroupMax && generateParams.frequencyIds.length >= genGroupMax;
+                  const limitReached = limitFrequenciesToBuses && genGroupMax && generateParams.frequencyIds.length >= genGroupMax;
                   const disabled = limitReached && !alreadySelected;
 
                   return (
@@ -1087,7 +1346,7 @@ export default function RoutesManagement() {
                           setGenerateParams(prev => {
                             const has = prev.frequencyIds.includes(f.id);
                             if (!has) {
-                              if (genGroupMax && prev.frequencyIds.length >= genGroupMax) {
+                              if (limitFrequenciesToBuses && genGroupMax && prev.frequencyIds.length >= genGroupMax) {
                                 toast.error(`Solo puedes seleccionar hasta ${genGroupMax} frecuencias (buses en el grupo)`);
                                 return prev;
                               }
