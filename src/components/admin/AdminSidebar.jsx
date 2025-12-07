@@ -16,7 +16,8 @@ import {
   Building2,
   Palette,
   ChevronDown,
-  MapPin
+  MapPin,
+  DollarSign
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -96,6 +97,12 @@ const navigationAdmin = [
     name: 'Ciudades',
     href: '/admin/cities',
     icon: MapPin,
+    roles: ['SUPER_ADMIN', 'ADMIN']
+  },
+  {
+    name: 'Balance',
+    href: '/admin/balance',
+    icon: DollarSign,
     roles: ['SUPER_ADMIN', 'ADMIN']
   },
   // {

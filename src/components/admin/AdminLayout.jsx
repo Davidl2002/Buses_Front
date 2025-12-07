@@ -14,6 +14,7 @@ const StaffManagement = lazy(() => import('@/pages/admin/StaffManagement'));
 const TicketsManagement = lazy(() => import('@/pages/admin/TicketsManagement'));
 const ReportsManagement = lazy(() => import('@/pages/admin/ReportsManagement'));
 const CitiesManagement = lazy(() => import('@/pages/admin/CitiesManagement'));
+const BalanceManagement = lazy(() => import('@/pages/admin/BalanceManagement'));
 
 // Admin de Cooperativa pages
 const CooperativaDashboard = lazy(() => import('@/pages/admin/CooperativaDashboard'));
@@ -55,6 +56,7 @@ export default function AdminLayout() {
               <Route path="staff" element={<StaffManagement />} />
               <Route path="tickets" element={<TicketsManagement />} />
               <Route path="cities" element={<CitiesManagement />} />
+              <Route path="balance" element={<BalanceManagement />} />
               <Route path="reports" element={<ReportsManagement />} />
             </Routes>
           </Suspense>
