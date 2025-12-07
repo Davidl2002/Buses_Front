@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { tripService } from '@/services';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,10 +15,11 @@ export default function MyTrips() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, upcoming, in_progress, completed
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
 
   useEffect(() => {
     fetchMyTrips();
-  }, [filter]);
+  }, [filter, currentUser]);
 
   const fetchMyTrips = async () => {
     try {
@@ -46,7 +48,20 @@ export default function MyTrips() {
       } else if (filter === 'completed') {
         filtered = data.filter(trip => trip.status === 'COMPLETED');
       }
-      // Si filter === 'all', no filtramos
+      // Si filter === 'all', no filtramos por estado
+
+      // Filtrar por chofer autenticado en frontend (si existe)
+      if (currentUser) {
+        const uid = currentUser.id || currentUser._id || currentUser.userId || currentUser._userId;
+        if (uid) {
+          filtered = filtered.filter((trip) => {
+            // Intentar varias propiedades posibles donde el backend pueda poner el id del chofer
+            const driverId = trip.driverId || trip.driver?._id || trip.driver?.id || trip.assignedDriverId || trip.choferId;
+            if (!driverId) return false; // si el viaje no tiene chofer asignado, no mostrar
+            return String(driverId) === String(uid);
+          });
+        }
+      }
       
       setTrips(filtered);
     } catch (error) {

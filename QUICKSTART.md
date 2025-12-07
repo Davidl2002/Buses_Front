@@ -69,7 +69,7 @@ const api = axios.create({
 });
 ```
 
-### Configurar PayPal (Opcional)
+### Configurar PayPal
 Agrega tu Client ID en el componente de pago.
 
 ## 🎨 Características del Diseño
