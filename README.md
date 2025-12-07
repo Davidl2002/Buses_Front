@@ -24,7 +24,7 @@ Este `README` está orientado a desarrolladores: contiene pasos rápidos para le
 1. Clonar el repositorio
 
 ```powershell
-git clone <repo-url>
+git clone https://github.com/Davidl2002/Buses_Front.git
 cd MovPass_Front
 ```
 
