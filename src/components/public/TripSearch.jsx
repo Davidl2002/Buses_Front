@@ -27,44 +27,96 @@ export default function TripSearch({ onSelectTrip }) {
   const [loading, setLoading] = useState(false);
   const [trips, setTrips] = useState([]);
 
+  // Cache expiration time: 5 minutes
+  const CACHE_EXPIRATION_MS = 5 * 60 * 1000;
+
+  // Helper function to get cached data with expiration check
+  const getCachedData = (key) => {
+    try {
+      const cached = sessionStorage.getItem(key);
+      if (!cached) return null;
+      
+      const { data, timestamp } = JSON.parse(cached);
+      const now = Date.now();
+      
+      // Check if cache has expired
+      if (now - timestamp > CACHE_EXPIRATION_MS) {
+        sessionStorage.removeItem(key);
+        return null;
+      }
+      
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+      return null;
+    } catch (e) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+  };
+
+  // Helper function to set cached data with timestamp
+  const setCachedData = (key, data) => {
+    try {
+      if (Array.isArray(data) && data.length > 0) {
+        sessionStorage.setItem(key, JSON.stringify({
+          data,
+          timestamp: Date.now()
+        }));
+      }
+    } catch (e) {
+      console.warn(`Failed to cache ${key}:`, e);
+    }
+  };
+
+  // Clear destination cache when origin changes
+  const clearDestinationCache = (origin) => {
+    try {
+      const cacheKey = `destinationCities_${origin}`;
+      sessionStorage.removeItem(cacheKey);
+    } catch (e) {}
+  };
+
   useEffect(() => {
     loadOriginCities();
   }, []);
 
   useEffect(() => {
     if (formData.origin) {
+      // Clear destinations and dates when origin changes
+      setDestinationCities([]);
+      setAvailableDates([]);
       loadDestinationCities(formData.origin);
       setFormData(prev => ({ ...prev, destination: '', date: '' }));
+    } else {
+      setDestinationCities([]);
+      setAvailableDates([]);
     }
   }, [formData.origin]);
 
   useEffect(() => {
     if (formData.origin && formData.destination) {
+      setAvailableDates([]);
       loadAvailableDates(formData.origin, formData.destination);
       setFormData(prev => ({ ...prev, date: '' }));
+    } else {
+      setAvailableDates([]);
     }
   }, [formData.origin, formData.destination]);
 
   const loadOriginCities = async () => {
     try {
-      // intentar cargar desde sessionStorage (ignorar arrays vacíos o contenido inválido)
-      const cached = sessionStorage.getItem('originCities');
+      // Try to load from cache with expiration check
+      const cached = getCachedData('originCities');
       if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setOriginCities(parsed);
-            return;
-          }
-        } catch (e) {
-          console.warn('Cached originCities inválido, se ignorará', e);
-        }
+        setOriginCities(cached);
+        return;
       }
       let response;
       try {
         response = await tripService.getOriginCities();
+
       } catch (err) {
-        console.warn('getOriginCities failed, will fallback to extracting from trips', err);
         response = null;
       }
       let data = response?.data?.data || [];
@@ -98,11 +150,7 @@ export default function TripSearch({ onSelectTrip }) {
         return { id: d.id || d._id || d.name || JSON.stringify(d), name: d.name || d.label || d.city || String(d) };
       });
       setOriginCities(normalized || []);
-      try {
-        if (Array.isArray(normalized) && normalized.length > 0) {
-          sessionStorage.setItem('originCities', JSON.stringify(normalized));
-        }
-      } catch (e) {}
+      setCachedData('originCities', normalized);
     } catch (error) {
       console.error('Error loading origin cities:', error);
       setOriginCities([]);
@@ -112,17 +160,11 @@ export default function TripSearch({ onSelectTrip }) {
   const loadDestinationCities = async (origin) => {
     try {
       const cacheKey = `destinationCities_${origin}`;
-      const cached = sessionStorage.getItem(cacheKey);
+      // Try to load from cache with expiration check
+      const cached = getCachedData(cacheKey);
       if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setDestinationCities(parsed);
-            return;
-          }
-        } catch (e) {
-          console.warn(`Cached ${cacheKey} inválido, se ignorará`, e);
-        }
+        setDestinationCities(cached);
+        return;
       }
       // Use the public destinations endpoint for the selected origin
       const response = await tripService.getDestinationCities(origin);
@@ -168,18 +210,14 @@ export default function TripSearch({ onSelectTrip }) {
           final = apiDestinations || [];
         }
         setDestinationCities(final);
-        try {
-          if (Array.isArray(final) && final.length > 0) sessionStorage.setItem(cacheKey, JSON.stringify(final));
-        } catch (e) {}
+        setCachedData(cacheKey, final);
         return;
       } catch (err) {
         // si falla el fallback, usar lo que devolvió el endpoint
       }
 
       setDestinationCities(apiDestinations || []);
-      try {
-        if (Array.isArray(apiDestinations) && apiDestinations.length > 0) sessionStorage.setItem(cacheKey, JSON.stringify(apiDestinations));
-      } catch (e) {}
+      setCachedData(cacheKey, apiDestinations);
     } catch (error) {
       setDestinationCities([]);
     }
@@ -188,7 +226,8 @@ export default function TripSearch({ onSelectTrip }) {
   const loadAvailableDates = async (origin, destination) => {
     try {
       const response = await tripService.getAvailableDates(origin, destination);
-      setAvailableDates(response.data.data || []);
+      const dates = response.data.data || [];
+      setAvailableDates(dates);
     } catch (error) {
       console.error('Error loading available dates:', error);
       // Fallback: generar fechas de los próximos 14 días
@@ -376,6 +415,27 @@ export default function TripSearch({ onSelectTrip }) {
     }).format(price);
   };
 
+  // Función para formatear fechas YYYY-MM-DD sin problemas de timezone
+  const formatDateLocal = (dateString) => {
+    if (!dateString) return '';
+    try {
+      // Parsear como fecha local para evitar conversión de timezone
+      const [year, month, day] = dateString.split('-').map(Number);
+      const date = new Date(year, month - 1, day);
+      
+      if (isNaN(date.getTime())) return dateString;
+      
+      return date.toLocaleDateString('es-EC', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch (e) {
+      return dateString;
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -449,7 +509,7 @@ export default function TripSearch({ onSelectTrip }) {
                   <SelectContent>
                     {availableDates.map((date) => (
                       <SelectItem key={date} value={date}>
-                        {format(new Date(date), 'PPP', { locale: es })}
+                        {formatDateLocal(date)}
                       </SelectItem>
                     ))}
                   </SelectContent>

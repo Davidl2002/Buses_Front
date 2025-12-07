@@ -33,8 +33,11 @@ export default function Login() {
       const redirect = new URLSearchParams(location.search).get('redirect');
       if (redirect) {
         navigate(`/${redirect}`);
-      } else if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'OFICINISTA') {
-        // Todos los roles administrativos van al dashboard general
+      } else if (user.role === 'OFICINISTA') {
+        // OFICINISTA va directo a vender tickets
+        navigate('/oficinista/vender-ticket');
+      } else if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        // Roles administrativos van al dashboard general
         navigate('/admin/dashboard');
       } else if (user.role === 'CHOFER') {
         navigate('/driver');
