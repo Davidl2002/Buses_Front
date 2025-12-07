@@ -23,6 +23,7 @@ Este `README` está orientado a desarrolladores: contiene pasos rápidos para le
 
 1. Clonar el repositorio
 
+
 ```powershell
 git clone https://github.com/Davidl2002/Buses_Front.git
 cd MovPass_Front
@@ -289,27 +290,6 @@ Recomendación: para pruebas rápidas crea usuarios desde `prisma/seed.ts` (back
 - Evitar manipular estado global en operaciones asíncronas (usar variables locales y update único de estado).
 
 
-## 10) Cómo contribuir (plantilla PR)
-
-Usa Conventional Commits y sigue este template en el PR:
-
-```
-Resumen:
-- Qué hace este PR:
-
-Cómo probar:
-1. Paso 1
-2. Paso 2
-
-Notas:
-- Migraciones: sí/no (comando)
-- Dependencias nuevas: paquete X
-
-Issue relacionado: #
-```
-
-
----
 
 # Contacto y soporte: 
 `Davidl2002` — `dl735894@gmail.com`
